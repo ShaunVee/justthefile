@@ -154,7 +154,10 @@ async def fetch(post_id: str, client: httpx.AsyncClient) -> dict[str, Any]:
     try:
         payload = response.json()
     except ValueError as exc:
+        # HTML where JSON was promised is Reddit's throttle or block page, which
+        # it serves under a 200. Same wall as a 403 and it used to fall through
+        # as a miss, which is how a walled lookup came back as an empty post.
         log.warning("reddit json returned non-JSON for %s: %s", post_id, exc)
-        return {}
+        raise UpstreamRefused(post_id, response.status_code) from exc
 
     return await parse(payload, post_id, client)

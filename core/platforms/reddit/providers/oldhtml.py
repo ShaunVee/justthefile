@@ -183,7 +183,25 @@ async def fetch(post_id: str, client: httpx.AsyncClient) -> dict[str, Any]:
         raise UpstreamRefused(post_id, response.status_code)
 
     if response.is_error:
+        # 404 included, and that one is the honest answer: a post that does not
+        # exist answers 404 with a page titled "page not found". So a miss here
+        # really is a miss, and falling through to the JSON API is right.
         log.warning("old.reddit answered %d for %s", response.status_code, post_id)
         return {}
 
-    return await parse(response.text, post_id, client)
+    html = response.text
+    if not _attributes(html):
+        # A 200 without the post's own div is not a thin post, it is not our
+        # page at all: Reddit's throttle and block interstitials come back 200,
+        # and a deleted post comes back 404 above. Taken at face value this
+        # parsed as "the post holds nothing", which is the one answer this
+        # module exists to avoid giving for a wall of ours. It is what a
+        # throttled lookup reported to every visitor: "No video or images in
+        # that post", about posts that were fine.
+        log.warning(
+            "old.reddit answered 200 with no post page for %s%s",
+            post_id, " via relay" if relay.enabled() else "",
+        )
+        raise UpstreamRefused(post_id, response.status_code)
+
+    return await parse(html, post_id, client)
