@@ -50,6 +50,18 @@ A JSON body with a `final` field is a working relay. `{"status": 403, "final":
 null}` means Cloudflare's addresses are blocked too, and the relay cannot be
 the answer: see the alternatives in `docs/DEPLOY.md`.
 
+`unauthorized` and a 401 is the key, not Reddit: `REDDIT_RELAY_KEY` and the
+worker's `RELAY_KEY` differ, or `.env` still holds the placeholder. The
+services log `relay rejected our key` and name the variable, and neither of
+them reports it as Reddit blocking the server, because the two look identical
+from the outside and only one of them has a fix.
+
+Set the variables in `.env` on the *host that runs the service*. Each service
+reads its own copy, so a bot and a web front end on different machines, or one
+container recreated and the other not, can disagree about whether the relay
+exists at all: the symptom is one of them working perfectly while the other
+insists Reddit is blocking it.
+
 ## When it is not set
 
 Both variables blank means every Reddit request goes out directly, exactly as

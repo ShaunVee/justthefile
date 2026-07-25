@@ -18,7 +18,13 @@ from typing import Optional
 import httpx
 
 from . import reddit, x
-from .base import DIRECT, LinkUnresolved, Resolution, UpstreamRefused
+from .base import (
+    DIRECT,
+    LinkUnresolved,
+    RelayMisconfigured,
+    Resolution,
+    UpstreamRefused,
+)
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +34,7 @@ __all__ = [
     "REGISTRY",
     "LinkUnresolved",
     "PostRef",
+    "RelayMisconfigured",
     "Resolution",
     "UpstreamRefused",
     "identify",
@@ -83,10 +90,12 @@ async def identify(url: str, client: httpx.AsyncClient) -> Optional[PostRef]:
     for handler in REGISTRY:
         try:
             post_id = await handler.identify(url, client)
-        except LinkUnresolved:
+        except (LinkUnresolved, RelayMisconfigured):
             # This handler claimed the link and couldn't follow it. No other
             # platform is going to do better with it, and swallowing it here
-            # would put the answer back to "unrecognised link".
+            # would put the answer back to "unrecognised link". Same for a
+            # relay that rejected us: the catch-all below would bury the one
+            # error in the system that names its own fix.
             raise
         except Exception:
             # One platform's parser blowing up must not make the whole site

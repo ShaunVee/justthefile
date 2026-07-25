@@ -42,8 +42,20 @@ _IREDDIT_RE = re.compile(r"^https?://i\.redd\.it/([a-z0-9]+\.[a-z0-9]+)", re.IGN
 # Gallery images are rendered from preview.redd.it, but the same basename on
 # i.redd.it is the untouched original rather than a resized, signed preview.
 _PREVIEW_RE = re.compile(
-    r"https://preview\.redd\.it/([a-z0-9]+\.(?:jpg|jpeg|png|webp))", re.IGNORECASE
+    r"https://preview\.redd\.it/([a-z0-9]+)\.(jpg|jpeg|png|webp)", re.IGNORECASE
 )
+
+# One tile of the gallery's thumbnail strip:
+#
+#     <div class="gallery-tile gallery-navigation"
+#          id="media-tile-<post id36>-<media id>" data-media-id="<media id>" …>
+#
+# The post's own ID is in there, which is what makes this the gallery rather
+# than "every image on the page". Comments carry preview.redd.it images too,
+# and sweeping the whole page for them is what turned a four-image post into
+# sixty-nine: every image anyone had replied with got counted as a gallery
+# item, in whatever order the comment thread happened to put them.
+_TILE_TEMPLATE = r'id="media-tile-{post_id}-([a-z0-9]+)"'
 
 
 def _attributes(html: str) -> dict[str, str]:
@@ -61,13 +73,39 @@ def _photo(url: str) -> MediaItem:
     )
 
 
-def _gallery_items(html: str) -> list[MediaItem]:
-    """Gallery images, deduplicated, in the order the page renders them."""
+def _extensions(html: str) -> dict[str, str]:
+    """media id -> file extension, read off the preview URLs on the page.
+
+    The tile markup names the media and not the file, and the extension is not
+    cosmetic: i.redd.it serves `<id>.jpeg` and 404s the same id as `.jpg`.
+    Reading it page-wide is safe here because only ids the gallery already
+    claimed are ever looked up.
+    """
+    found: dict[str, str] = {}
+    for name, extension in _PREVIEW_RE.findall(html):
+        found.setdefault(name.lower(), extension.lower())
+    return found
+
+
+def _gallery_items(html: str, post_id: str) -> list[MediaItem]:
+    """This post's gallery images, in the order the tile strip renders them.
+
+    Empty when the strip isn't there, which sends the caller to the JSON
+    provider and its `gallery_data` rather than guessing from stray images.
+    """
+    tiles = re.compile(_TILE_TEMPLATE.format(post_id=re.escape(post_id)), re.IGNORECASE)
+    extensions = _extensions(html)
+
     seen: list[str] = []
-    for name in _PREVIEW_RE.findall(html):
-        if name not in seen:
-            seen.append(name)
-    return [_photo(f"https://i.redd.it/{name}") for name in seen]
+    for media_id in tiles.findall(html):
+        media_id = media_id.lower()
+        if media_id not in seen:
+            seen.append(media_id)
+
+    return [
+        _photo(f"https://i.redd.it/{media_id}.{extensions.get(media_id, 'jpg')}")
+        for media_id in seen
+    ]
 
 
 async def _video_item(
@@ -109,7 +147,7 @@ async def parse(
         if item:
             items.append(item)
     elif attrs.get("is-gallery") == "true":
-        items.extend(_gallery_items(html))
+        items.extend(_gallery_items(html, post_id))
     else:
         photo = _IREDDIT_RE.match(url)
         if photo:
@@ -120,7 +158,7 @@ async def parse(
 
 def _thumbnail(html: str) -> Optional[str]:
     match = _PREVIEW_RE.search(html)
-    return f"https://preview.redd.it/{match.group(1)}" if match else None
+    return f"https://preview.redd.it/{match.group(1)}.{match.group(2)}" if match else None
 
 
 async def fetch(post_id: str, client: httpx.AsyncClient) -> dict[str, Any]:

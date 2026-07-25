@@ -36,7 +36,12 @@ from telegram.ext import (
 )
 
 from core import mux, select
-from core.platforms import REGISTRY, LinkUnresolved, UpstreamRefused
+from core.platforms import (
+    REGISTRY,
+    LinkUnresolved,
+    RelayMisconfigured,
+    UpstreamRefused,
+)
 
 from . import profile, transcode
 from .access import is_allowed
@@ -140,6 +145,12 @@ class Runtime:
             await status.set("Fetching post…", force=True)
             try:
                 post = await self.handler.fetch(job.post_id, self.client)
+            except RelayMisconfigured as exc:
+                # Ours, not the site's, and the only wall here with a fix.
+                log.error("%s", exc)
+                await status.done()
+                await bot.send_message(job.chat_id, self.profile.relay_misconfigured)
+                return
             except UpstreamRefused as exc:
                 # Every source turned us away. This used to fall through to the
                 # empty-post reply below, which blamed the post for a wall of
@@ -480,6 +491,10 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     try:
         post_id = await runtime.handler.identify(message.text, runtime.client)
+    except RelayMisconfigured as exc:
+        log.error("%s", exc)
+        await message.reply_text(runtime.profile.relay_misconfigured)
+        return
     except LinkUnresolved as exc:
         # The link is one we handle; the site it hides behind wouldn't answer.
         # Telling someone their link is unrecognisable here is a wrong answer

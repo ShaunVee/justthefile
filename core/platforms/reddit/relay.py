@@ -30,6 +30,7 @@ from typing import Optional
 
 import httpx
 
+from ..base import RelayMisconfigured
 from .headers import HEADERS
 
 log = logging.getLogger(__name__)
@@ -50,6 +51,23 @@ def enabled() -> bool:
     return bool(_relay()[0])
 
 
+def _reject_unauthorized(status: int) -> None:
+    """Raise on the relay's own 401, which only ever means a mismatched key.
+
+    Reddit cannot produce this: the caller is talking to the worker, and the
+    worker answers 401 before it fetches anything.
+    """
+    if status != 401:
+        return
+    log.error(
+        "relay rejected our key: check %s matches the worker's RELAY_KEY", KEY_VAR
+    )
+    raise RelayMisconfigured(
+        f"the Reddit relay rejected our key: {KEY_VAR} does not match the "
+        "worker's RELAY_KEY"
+    )
+
+
 async def get(
     url: str, client: httpx.AsyncClient, *, timeout: float = 15.0
 ) -> httpx.Response:
@@ -57,9 +75,12 @@ async def get(
 
     The response carries Reddit's own status either way, so callers keep
     treating 403 as Reddit refusing them. A 401 is the relay itself refusing,
-    which means the shared secret is wrong: logged loudly here because it
-    would otherwise read as an ordinary upstream failure and get retried
-    forever.
+    which means the shared secret is wrong, and that is raised rather than
+    returned: handed back as a status it is indistinguishable from Reddit's
+    own refusal, and every caller then reports a wrong key as a blocked
+    address. Everything downstream of that reads correctly and is wrong, which
+    is the expensive kind of wrong: the one place to look is the one place
+    nobody is told about.
     """
     base, key = _relay()
     if not base:
@@ -74,10 +95,7 @@ async def get(
         timeout=timeout,
         follow_redirects=True,
     )
-    if response.status_code == 401:
-        log.error(
-            "relay rejected our key: check %s matches the worker's RELAY_KEY", KEY_VAR
-        )
+    _reject_unauthorized(response.status_code)
     return response
 
 
@@ -110,11 +128,7 @@ async def redirect_of(
         timeout=timeout,
         follow_redirects=True,
     )
-    if response.status_code == 401:
-        log.error(
-            "relay rejected our key: check %s matches the worker's RELAY_KEY", KEY_VAR
-        )
-        return 401, None
+    _reject_unauthorized(response.status_code)
     if not response.is_success:
         return response.status_code, None
 

@@ -80,6 +80,15 @@ class Profile:
         "requests away. Nothing wrong with your link, and no other link will "
         "get through either. This one's mine to fix, so try again later."
     )
+    # Reply when the wall was one of ours: a relay that rejected our own key
+    # rather than the site rejecting our address. Identical from where the
+    # sender sits and the opposite thing to fix, so it does not say "the site
+    # is blocking me" and send whoever runs this looking at the wrong end.
+    # Defaulted for the same reason as link_unresolved: it names nothing the
+    # sender did and nothing platform-specific.
+    relay_misconfigured: str = (
+        "Something's misconfigured on my server, I've informed the highly trained monkey that runs me, Check back in a bit!"
+    )
     commands: tuple[tuple[str, str], ...] = COMMANDS
 
 

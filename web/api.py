@@ -43,6 +43,17 @@ _BLOCKED = (
     "is fine, and no other link will get through either. This one's on us."
 )
 
+# Said instead of _BLOCKED when it was our own relay that turned us away, not
+# the site. A visitor can do nothing about either, so the copy differs only in
+# what it does not claim: the operator reading this over someone's shoulder is
+# the one person who can fix it, and _BLOCKED would send them auditing the
+# server's address when the answer is a mismatched key. The log line beside
+# this names the variable.
+_MISCONFIGURED = (
+    "Something's misconfigured on this server, so lookups can't go out at all. "
+    "Nothing to do with your link. It's been logged."
+)
+
 
 def _client_ip(request: Request, trust_proxy: bool) -> str:
     """Caller identity for rate limiting.
@@ -106,6 +117,9 @@ def create_app(cfg: WebConfig | None = None) -> FastAPI:
 
         try:
             ref = await platforms.identify(url, client)
+        except platforms.RelayMisconfigured as exc:
+            log.error("%s", exc)
+            return JSONResponse({"error": _MISCONFIGURED}, status_code=502)
         except platforms.LinkUnresolved as exc:
             # A share link we recognised and couldn't follow. 502, not 400:
             # nothing about the link needs changing.
@@ -137,6 +151,9 @@ def create_app(cfg: WebConfig | None = None) -> FastAPI:
 
         try:
             resolution = await ref.fetch(client)
+        except platforms.RelayMisconfigured as exc:
+            log.error("%s", exc)
+            return JSONResponse({"error": _MISCONFIGURED}, status_code=502)
         except platforms.UpstreamRefused as exc:
             # Not "try again in a moment", and emphatically not the empty-post
             # answer below: the site refused us, and it will refuse the next

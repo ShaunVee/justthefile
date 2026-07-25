@@ -80,6 +80,18 @@ class LinkUnresolved(Exception):
         return self.reason == REFUSED
 
 
+class RelayMisconfigured(Exception):
+    """A hop this deployment owns turned us away, rather than the site.
+
+    Deliberately not an `UpstreamRefused`. They arrive as the same status from
+    the same request and mean opposite things: one is the site walling off this
+    server, which no amount of fixing here undoes, and the other is a shared
+    secret that doesn't match, which nothing but fixing here undoes. Folding
+    the second into the first is what makes a one-line config error read as
+    "Reddit is blocking us" in every log and every reply.
+    """
+
+
 class UpstreamRefused(Exception):
     """Every source for a post turned us away, rather than answering emptily.
 
