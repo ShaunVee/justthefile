@@ -7,8 +7,8 @@
      download path sets referrerPolicy explicitly; this covers everything else
      the page fetches, and leaks nothing to X either way. -->
 <meta name="referrer" content="no-referrer">
-<title>justthefile: download video from X (Twitter)</title>
-<meta name="description" content="Paste a link to an X post, get the video as a real mp4. No mirror page, no ads, no account, no watermark.">
+<title>justthefile: download video and photos from X and Reddit</title>
+<meta name="description" content="Paste a link from X (Twitter) or Reddit and get the real file: video or photo, no mirror page, no ads, no account, no watermark.">
 <link rel="canonical" href="https://justthefile.com/">
 <link rel="icon" href="/logo.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/logo.png">
@@ -19,8 +19,8 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="justthefile">
 <meta property="og:url" content="https://justthefile.com/">
-<meta property="og:title" content="justthefile: download video from X (Twitter)">
-<meta property="og:description" content="Paste a link to an X post, get the video as a real mp4. No mirror page, no ads, no account, no watermark.">
+<meta property="og:title" content="justthefile: download video and photos from X (Twitter) and Reddit">
+<meta property="og:description" content="Paste a link from X (Twitter) or Reddit and get the real file: video or photo, no mirror page, no ads, no account, no watermark.">
 <meta property="og:image" content="https://justthefile.com/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -45,6 +45,9 @@
   </symbol>
   <symbol id="i-link" viewBox="0 0 24 24">
     <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M10 13.5a3.5 3.5 0 0 0 5 0l3-3a3.54 3.54 0 0 0-5-5l-1.5 1.5M14 10.5a3.5 3.5 0 0 0-5 0l-3 3a3.54 3.54 0 0 0 5 5l1.5-1.5"/>
+  </symbol>
+  <symbol id="i-clipboard" viewBox="0 0 24 24">
+    <path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M9 4.5h6a1 1 0 0 1 1 1v.5a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1v-.5a1 1 0 0 1 1-1Zm-1 1.5H6.5A1.5 1.5 0 0 0 5 7.5v11A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5v-11A1.5 1.5 0 0 0 17.5 6H16"/>
   </symbol>
   <symbol id="i-download" viewBox="0 0 24 24">
     <path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M12 3.5v10m0 0 4-4m-4 4-4-4M4 16v2.5A2.5 2.5 0 0 0 6.5 21h11a2.5 2.5 0 0 0 2.5-2.5V16"/>
@@ -76,14 +79,20 @@
   <section class="hero">
     <h1>Just the file.<span>Nothing else.</span></h1>
     <p class="tagline">
-      Paste a link. Get the video as a real mp4, with no mirror page, no ads
-      and no account.
+      Paste a link. Get the real file, video or image, with no mirror page,
+      no ads and no account.
     </p>
   </section>
 
   <form id="resolve-form" autocomplete="off">
     <div class="field">
-      <svg class="icon field-icon" aria-hidden="true"><use href="#i-link"></use></svg>
+      <!-- Paste button: revealed by app.js only where the clipboard can be
+           read. Where it can't (Firefox desktop, no-JS), the link icon beside
+           it stays as the field's decoration instead. -->
+      <button type="button" id="paste" class="paste" aria-label="Paste link" title="Paste" hidden>
+        <svg class="icon" aria-hidden="true"><use href="#i-clipboard"></use></svg>
+      </button>
+      <svg class="icon field-icon" id="field-icon" aria-hidden="true"><use href="#i-link"></use></svg>
       <input
         id="url"
         name="url"

@@ -145,16 +145,55 @@ h1 span { display: block; color: var(--muted); }
 /* ---- form ---- */
 
 .field {
+  position: relative;
+  z-index: 0;
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.4rem 0.4rem 0.4rem 0.9rem;
+  padding: 0.4rem;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
+
+/* A pool of accent light behind the box, so the one thing to do on the page
+   reads as the one thing to do. Sits under the field's own opaque surface, so
+   only the halo around the edges shows; brightens when it takes focus. */
+.field::before {
+  content: "";
+  position: absolute;
+  inset: -0.9rem -0.7rem;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(72% 150% at 50% 45%, rgb(99 102 241 / 0.38), transparent 72%);
+  filter: blur(18px);
+  opacity: 0.7;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.field:focus-within::before { opacity: 1; }
+
+@media (prefers-color-scheme: light) {
+  .field::before { opacity: 0.45; }
+  .field:focus-within::before { opacity: 0.7; }
+}
+
+/* A ghost button on the left that fills the box from the clipboard: one tap
+   instead of long-press-then-paste, which is the whole point on a phone. */
+.paste {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.55rem 0.6rem;
+  font-size: 1.15rem;
+  color: var(--muted);
+  background: none;
+  border-color: transparent;
+}
+.paste:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
 
 /* The whole bar reacts, not just the input: it looks like one control, so it
    should focus like one. */
@@ -163,7 +202,7 @@ h1 span { display: block; color: var(--muted); }
   box-shadow: var(--ring), var(--shadow);
 }
 
-.field-icon { color: var(--muted); font-size: 1.15rem; }
+.field-icon { color: var(--muted); font-size: 1.15rem; margin-left: 0.5rem; }
 
 input[type="text"] {
   flex: 1 1 auto;

@@ -38,6 +38,10 @@ log = logging.getLogger(__name__)
 URL_VAR = "REDDIT_RELAY_URL"
 KEY_VAR = "REDDIT_RELAY_KEY"
 
+# Where the worker reports the request really landed, since the hops happen at
+# its end. Named in `relay/worker.js`, which sets it.
+RELAY_FINAL_URL_HEADER = "X-Relay-Final-Url"
+
 
 def _relay() -> tuple[str, str]:
     return (
@@ -66,6 +70,34 @@ def _reject_unauthorized(status: int) -> None:
         f"the Reddit relay rejected our key: {KEY_VAR} does not match the "
         "worker's RELAY_KEY"
     )
+
+
+def landed_on(response: httpx.Response) -> str:
+    """Where the request actually ended up, redirects and relay included.
+
+    Through the relay the hops happen at the far end, so httpx only ever sees
+    the worker's own address. The worker reports the real destination in a
+    header for exactly this reason, and without it the most common refusal
+    Reddit serves is invisible from here. See `logged_out_wall`.
+    """
+    return response.headers.get(RELAY_FINAL_URL_HEADER) or str(response.url)
+
+
+def logged_out_wall(response: httpx.Response) -> bool:
+    """Whether Reddit answered by demanding a login.
+
+    Its logged-out rate limit does not refuse and does not slow down: it
+    redirects to /login/?reason=lor2 and serves that page under a 200. Taken at
+    face value it is a post page with nothing in it, which is how a rate limit
+    came to be reported as an empty post to everyone who pasted a link during
+    one. Observed live, from the relay, on a post that was fine seconds later
+    from an address that had not been asking.
+    """
+    try:
+        path = httpx.URL(landed_on(response)).path or ""
+    except (httpx.InvalidURL, ValueError, TypeError, UnicodeError):
+        return False
+    return path.rstrip("/") == "/login"
 
 
 async def get(

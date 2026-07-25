@@ -12,6 +12,8 @@
 const form = document.getElementById("resolve-form");
 const input = document.getElementById("url");
 const submit = document.getElementById("submit");
+const pasteButton = document.getElementById("paste");
+const fieldIcon = document.getElementById("field-icon");
 const message = document.getElementById("message");
 const results = document.getElementById("results");
 const template = document.getElementById("media-card");
@@ -343,6 +345,41 @@ form.addEventListener("submit", (event) => {
   const url = input.value.trim();
   if (url) resolve(url);
 });
+
+/* A long URL scrolls the field to its tail, hiding the start behind the caret
+   and leaving the button edge where the text runs out: you can't see what you
+   pasted. Snapping back to the left rests the field on the start of the link,
+   the part that names the post, so it can be read before submitting. */
+function showLinkStart() {
+  input.scrollLeft = 0;
+}
+
+input.addEventListener("blur", showLinkStart);
+
+/* readText is the gate: iOS Safari and Chrome on Android have it behind a tap,
+   which is exactly this button. Firefox on desktop doesn't, so there the link
+   icon stays and nothing here runs. */
+if (navigator.clipboard && navigator.clipboard.readText) {
+  pasteButton.hidden = false;
+  fieldIcon.hidden = true;
+
+  pasteButton.addEventListener("click", async () => {
+    try {
+      const text = (await navigator.clipboard.readText()).trim();
+      if (!text) return;
+      input.value = text;
+      // Rest on the start of the link, not the tail the caret would scroll to,
+      // so it can be read before submitting. Submitting stays deliberate: the
+      // paste fills the box, the button does the download.
+      input.setSelectionRange(0, 0);
+      showLinkStart();
+    } catch {
+      // Denied or empty. Fall back to a normal focus so the manual paste
+      // gesture is one tap away.
+      input.focus();
+    }
+  });
+}
 
 // Deep link support: /?url=... resolves on load, so the site can be wired up as
 // a share target or a bookmarklet.

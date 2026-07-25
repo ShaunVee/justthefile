@@ -189,6 +189,17 @@ async def fetch(post_id: str, client: httpx.AsyncClient) -> dict[str, Any]:
         log.warning("old.reddit answered %d for %s", response.status_code, post_id)
         return {}
 
+    if relay.logged_out_wall(response):
+        # Named rather than lumped in with the check below, because this one
+        # says what to do about it: it is a rate limit on the address the
+        # lookups go out from, it lifts on its own, and no link is going to
+        # get round it in the meantime.
+        log.warning(
+            "reddit bounced %s to its logged-out rate limit%s",
+            post_id, " via relay" if relay.enabled() else "",
+        )
+        raise UpstreamRefused(post_id, response.status_code)
+
     html = response.text
     if not _attributes(html):
         # A 200 without the post's own div is not a thin post, it is not our
