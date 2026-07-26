@@ -17,7 +17,7 @@ from typing import Optional
 
 import httpx
 
-from . import reddit, x
+from . import facebook, reddit, x
 from .base import (
     DIRECT,
     LinkUnresolved,
@@ -28,7 +28,7 @@ from .base import (
 
 log = logging.getLogger(__name__)
 
-REGISTRY: tuple[ModuleType, ...] = (x, reddit)
+REGISTRY: tuple[ModuleType, ...] = (x, reddit, facebook)
 
 __all__ = [
     "REGISTRY",
