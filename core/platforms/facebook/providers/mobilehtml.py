@@ -36,12 +36,13 @@ import httpx
 from core.models import VIDEO, MediaItem, Variant
 
 from ...base import UpstreamRefused
-from .. import relay
+from .. import relay, urls
 
 log = logging.getLogger(__name__)
 
 # www carries the JSON blob reliably; m. increasingly serves a JS shell instead.
-ENDPOINT = "https://www.facebook.com/watch/?v={video_id}"
+# The path (watch vs reel) is decided by `urls.fetch_path` from the ID's shape.
+HOST = "https://www.facebook.com"
 
 _REFUSALS = frozenset({401, 403, 429})
 
@@ -119,7 +120,7 @@ async def fetch(video_id: str, client: httpx.AsyncClient) -> dict[str, Any]:
     the one this whole platform is built to avoid giving for a wall of ours.
     """
     try:
-        response = await relay.get(ENDPOINT.format(video_id=video_id), client)
+        response = await relay.get(HOST + urls.fetch_path(video_id), client)
     except httpx.HTTPError as exc:
         log.warning("facebook html fetch failed for %s: %s", video_id, exc)
         return {}

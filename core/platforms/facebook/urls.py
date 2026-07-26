@@ -19,9 +19,9 @@ so they have to be followed. That is the same problem /s/ poses on Reddit and
 t.co on X, and it is solved the same way, through the relay when one is set,
 because these hops ask facebook.com itself and a walled address fails them.
 
-Reels are a known gap: the ID resolves but the watch URL the providers build
-from it does not always serve a reel. Tracked rather than hidden; see the note
-in `providers.resolve`.
+A reel resolves to an ID tagged with REEL_PREFIX, so the providers fetch it
+from the /reel/ path rather than the watch path, which does not reliably serve
+one. See `fetch_path`.
 
 The redirect is the only part of this module that can fail for reasons that
 have nothing to do with the link. It says so, loudly, rather than returning
@@ -56,6 +56,14 @@ _HOSTS = {
     "fb.watch",
     "fb.com",
 }
+
+# A reel is the same kind of page as a watch video, carrying the same
+# playable_url blob, but it lives at a different path and the watch path does
+# not reliably serve one. So the ID a reel resolves to is tagged with this
+# prefix, which `fetch_path` reads back to ask the right page. The rest of the
+# system treats the ID as opaque, so the prefix rides through the cache key and
+# everywhere else untouched.
+REEL_PREFIX = "reel:"
 
 # Facebook IDs are long integers. Five as a lower bound stops a short path
 # segment being mistaken for one while accepting everything Facebook issues.
@@ -126,8 +134,25 @@ def video_id_from_url(url: str) -> Optional[str]:
             return value
 
     path = parsed.path or ""
-    match = _REEL_RE.match(path) or _VIDEOS_RE.match(path)
-    return match.group("id") if match else None
+    reel = _REEL_RE.match(path)
+    if reel:
+        return f"{REEL_PREFIX}{reel.group('id')}"
+    videos = _VIDEOS_RE.match(path)
+    return videos.group("id") if videos else None
+
+
+def fetch_path(post_id: str) -> str:
+    """The page path to fetch for a resolved ID, reel or plain video.
+
+    A reel and a watch video are the same kind of page carrying the same media,
+    but they live at different paths and the watch path does not reliably serve
+    a reel. The REEL_PREFIX set by `video_id_from_url` is what survives this far
+    to tell them apart; the providers prepend their own host to what this
+    returns.
+    """
+    if post_id.startswith(REEL_PREFIX):
+        return f"/reel/{post_id[len(REEL_PREFIX):]}"
+    return f"/watch/?v={post_id}"
 
 
 async def resolve_share_link(url: str, client: httpx.AsyncClient) -> str:

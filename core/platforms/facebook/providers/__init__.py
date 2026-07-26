@@ -65,10 +65,10 @@ WALL = _Wall()
 async def resolve(video_id: str, client: httpx.AsyncClient) -> dict[str, Any]:
     """Try each provider until one returns media.
 
-    Reels are the known gap here: the ID is real but the watch URL the providers
-    build from it does not always serve a reel, so a reel can resolve to an
-    empty result rather than a refusal. That is a miss, not a wall, and is
-    reported as such.
+    Reels and plain videos both arrive here as an ID and are handled the same
+    way: the reel-vs-watch distinction rode in on the ID's shape and was spent
+    by `urls.fetch_path` when each provider built its URL, so nothing below this
+    line has to know which it is holding.
     """
     held = WALL.holding()
     if held is not None:

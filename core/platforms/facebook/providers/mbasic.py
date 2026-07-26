@@ -29,11 +29,12 @@ import httpx
 from core.models import VIDEO, MediaItem, Variant
 
 from ...base import UpstreamRefused
-from .. import relay
+from .. import relay, urls
 
 log = logging.getLogger(__name__)
 
-ENDPOINT = "https://mbasic.facebook.com/watch/?v={video_id}"
+# The path (watch vs reel) is decided by `urls.fetch_path` from the ID's shape.
+HOST = "https://mbasic.facebook.com"
 
 _REFUSALS = frozenset({401, 403, 429})
 
@@ -77,7 +78,7 @@ def parse(html: str, video_id: str) -> dict[str, Any]:
 async def fetch(video_id: str, client: httpx.AsyncClient) -> dict[str, Any]:
     """Returns {} on any miss. A refusal raises, for the reason in mobilehtml."""
     try:
-        response = await relay.get(ENDPOINT.format(video_id=video_id), client)
+        response = await relay.get(HOST + urls.fetch_path(video_id), client)
     except httpx.HTTPError as exc:
         log.info("facebook mbasic fetch failed for %s: %s", video_id, exc)
         return {}
