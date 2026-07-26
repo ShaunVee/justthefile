@@ -35,10 +35,22 @@ const ALLOWED_HOST = /^([a-z0-9-]+\.)*(facebook\.com|fb\.watch|fb\.com)$/;
 // The header set Facebook answers a logged-out page with. Kept in step with
 // core/platforms/facebook/headers.py by hand: two runtimes, one value, and no
 // way to share it.
-const USER_AGENT =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
-  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36";
-const ACCEPT_LANGUAGE = "en-US,en;q=0.9";
+//
+// A browser User-Agent alone is no longer enough. Facebook withholds the
+// playable_url blob unless the request looks like a top-level navigation:
+// without the Accept header it serves a media-less JS shell, and without
+// Sec-Fetch-Mode the /reel/ path answers 400. See the headers.py docstring for
+// the full account; miss either and every link reads as an empty post.
+const REQUEST_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+  "Accept-Language": "en-US,en;q=0.9",
+  Accept:
+    "text/html,application/xhtml+xml,application/xml;q=0.9," +
+    "image/avif,image/webp,*/*;q=0.8",
+  "Sec-Fetch-Mode": "navigate",
+};
 
 // A video page for five minutes: what the caller takes off it are fbcdn links,
 // which outlive that. A share link for a day, because a token points at one
@@ -91,7 +103,7 @@ function tagged(response, state) {
 
 async function pageAnswer(target) {
   const page = await fetch(target, {
-    headers: { "User-Agent": USER_AGENT, "Accept-Language": ACCEPT_LANGUAGE },
+    headers: REQUEST_HEADERS,
     redirect: "follow",
   });
   const body = await page.arrayBuffer();
@@ -112,7 +124,7 @@ async function pageAnswer(target) {
 
 async function redirectAnswer(target) {
   const hop = await fetch(target, {
-    headers: { "User-Agent": USER_AGENT, "Accept-Language": ACCEPT_LANGUAGE },
+    headers: REQUEST_HEADERS,
     redirect: "manual",
   });
   const location = hop.headers.get("Location");
