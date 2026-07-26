@@ -7,8 +7,8 @@
      download path sets referrerPolicy explicitly; this covers everything else
      the page fetches, and leaks nothing to X either way. -->
 <meta name="referrer" content="no-referrer">
-<title>justthefile: download video and photos from X and Reddit</title>
-<meta name="description" content="Paste a link from X (Twitter) or Reddit and get the real file: video or photo, no mirror page, no ads, no account, no watermark.">
+<title>justthefile: download video and photos from X, Reddit and Facebook</title>
+<meta name="description" content="Paste a link from X (Twitter), Reddit or Facebook and get the real file: video or photo, no mirror page, no ads, no account, no watermark.">
 <link rel="canonical" href="https://justthefile.com/">
 <link rel="icon" href="/logo.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/logo.png">
@@ -19,8 +19,8 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="justthefile">
 <meta property="og:url" content="https://justthefile.com/">
-<meta property="og:title" content="justthefile: download video and photos from X (Twitter) and Reddit">
-<meta property="og:description" content="Paste a link from X (Twitter) or Reddit and get the real file: video or photo, no mirror page, no ads, no account, no watermark.">
+<meta property="og:title" content="justthefile: download video and photos from X (Twitter), Reddit and Facebook">
+<meta property="og:description" content="Paste a link from X (Twitter), Reddit or Facebook and get the real file: video or photo, no mirror page, no ads, no account, no watermark.">
 <meta property="og:image" content="https://justthefile.com/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -39,6 +39,9 @@
   </symbol>
   <symbol id="i-reddit" viewBox="0 0 24 24">
     <path fill="currentColor" d="M22 11.82a2.34 2.34 0 0 0-3.96-1.66 11.4 11.4 0 0 0-5.83-1.83l.99-4.66 3.25.69a1.67 1.67 0 1 0 .2-1.02l-3.77-.8a.5.5 0 0 0-.59.38l-1.15 5.4a11.4 11.4 0 0 0-5.9 1.83A2.34 2.34 0 1 0 2.9 14.4a4.4 4.4 0 0 0-.05.7c0 3.55 4.1 6.43 9.16 6.43s9.16-2.88 9.16-6.43a4.4 4.4 0 0 0-.05-.7A2.34 2.34 0 0 0 22 11.82ZM7.66 13.5a1.67 1.67 0 1 1 3.34 0 1.67 1.67 0 0 1-3.34 0Zm9.03 4.36c-1.15 1.15-3.34 1.24-3.98 1.24s-2.84-.09-3.98-1.24a.44.44 0 0 1 .62-.62c.72.72 2.27.98 3.36.98s2.64-.26 3.36-.98a.44.44 0 0 1 .62.62Zm-.35-2.69a1.67 1.67 0 1 1 0-3.35 1.67 1.67 0 0 1 0 3.35Z"/>
+  </symbol>
+  <symbol id="i-facebook" viewBox="0 0 24 24">
+    <path fill="currentColor" d="M22 12.06C22 6.5 17.52 2 12 2S2 6.5 2 12.06c0 5.02 3.66 9.18 8.44 9.94v-7.03H7.9v-2.9h2.54V9.85c0-2.52 1.5-3.92 3.77-3.92 1.09 0 2.24.2 2.24.2v2.46h-1.26c-1.24 0-1.63.78-1.63 1.57v1.89h2.78l-.44 2.9h-2.34V22c4.78-.76 8.44-4.92 8.44-9.94Z"/>
   </symbol>
   <symbol id="i-telegram" viewBox="0 0 24 24">
     <path fill="currentColor" d="M21.7 4.28 18.5 19.4c-.24 1.07-.88 1.33-1.78.83l-4.92-3.62-2.37 2.28c-.26.26-.48.48-.99.48l.35-5 9.1-8.22c.4-.35-.08-.55-.61-.2L5.03 13.03.2 11.52c-1.05-.33-1.07-1.05.22-1.56L20.34 2.3c.87-.33 1.64.2 1.36 1.98Z"/>
@@ -117,6 +120,7 @@
       <span class="platform-list" id="supported">
         <span class="chip"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>X (Twitter)</span>
         <span class="chip"><svg class="icon" aria-hidden="true"><use href="#i-reddit"></use></svg>Reddit</span>
+        <span class="chip"><svg class="icon" aria-hidden="true"><use href="#i-facebook"></use></svg>Facebook</span>
       </span>
     </p>
   </form>
@@ -173,6 +177,14 @@
         <span class="bot-text">
           <strong>Reddit</strong>
           <span class="handle">@rddt_downloader_bot</span>
+        </span>
+        <svg class="icon go" aria-hidden="true"><use href="#i-telegram"></use></svg>
+      </a>
+      <a class="bot" href="https://t.me/fbook_downloader_bot" rel="noopener" target="_blank">
+        <svg class="icon brand" aria-hidden="true"><use href="#i-facebook"></use></svg>
+        <span class="bot-text">
+          <strong>Facebook</strong>
+          <span class="handle">@fbook_downloader_bot</span>
         </span>
         <svg class="icon go" aria-hidden="true"><use href="#i-telegram"></use></svg>
       </a>

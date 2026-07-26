@@ -178,7 +178,58 @@ REDDIT = Profile(
     ),
 )
 
-PROFILES: dict[str, Profile] = {"x": X, "reddit": REDDIT}
+# The wall is the headline: most Facebook downloaders bounce off a "log in to
+# continue" screen, so "no login" is the reason someone is looking for this one.
+# Sound is not a selling point here the way it is on Reddit: Facebook's
+# progressive mp4 already carries its audio, so the copy doesn't make a promise
+# out of something every tool gets right.
+FACEBOOK = Profile(
+    name="Facebook Video Downloader",
+    photo="assets/bot-facebook.png",
+    short_description=(
+        "Send a Facebook video, Reel or Watch link and get it back as an mp4. "
+        "fb.watch and share links work too."
+    ),
+    description=(
+        "Send me a link to a Facebook video and I'll send it back as an mp4, "
+        "playable inline and saveable.\n\n"
+        "• Reels, Watch clips and posts with video\n"
+        "• fb.watch short links and /share/ links\n"
+        "• sound already on the file, nothing to unmute\n\n"
+        "No login, and no \"log in to continue\" wall. Videos over Telegram's "
+        "50 MB limit are compressed to fit automatically. Links you've sent "
+        "before return instantly."
+    ),
+    help=(
+        "Send me a link to a Facebook video and I'll send it back as an mp4, "
+        "playable inline and saveable.\n\n"
+        "Reels, Watch clips, fb.watch short links and /share/ links all work, "
+        "with the sound already on the file.\n\n"
+        "Videos over Telegram's 50 MB limit are compressed automatically; "
+        "anything too long to compress comes back as a direct download link."
+    ),
+    unknown_link=(
+        "That doesn't look like a Facebook video link. Send something like\n"
+        "https://www.facebook.com/watch?v=1234567890\n"
+        "A Reel, an fb.watch link or a /share/ link works too."
+    ),
+    # fb.watch and /share/ links are tokens, not posts: they mean nothing until
+    # Facebook says what they point at. When Facebook won't answer, the link is
+    # still fine, so the copy keeps the blame off it and offers the canonical
+    # link, which needs no lookup. Same shape as Reddit's /s/ case.
+    link_unresolved=(
+        "Facebook didn't answer when I asked where that link goes. The link is "
+        "fine: send it again in a moment, or paste the full "
+        "facebook.com/watch?v=… or /reel/… link, which needs no lookup."
+    ),
+    upstream_blocked=(
+        "Facebook is refusing requests from my server at the moment, so I can't "
+        "look up videos right now. Your link is fine and a different Facebook "
+        "link won't help: it hits the same wall. Mine to fix, so do try later."
+    ),
+)
+
+PROFILES: dict[str, Profile] = {"x": X, "reddit": REDDIT, "facebook": FACEBOOK}
 
 
 def for_platform(name: str) -> Profile:

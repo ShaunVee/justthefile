@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="justthefile for Facebook">
+  <title>justthefile for Facebook</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#20262e"/>
+      <stop offset="1" stop-color="#0a0d11"/>
+    </linearGradient>
+    <linearGradient id="page" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#c7d3e1"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+
+  <!-- Third in the set, same silhouette as assets/logo.svg and the other bot
+       marks, with the arrow drawn in the platform's colour rather than knocked
+       out of the page. That one change is what separates a bot avatar from the
+       site's own mark.
+
+       Facebook's brand blue (#1877F2) is a bright azure: unmistakable against
+       Reddit's orange and, at 32px in a chat list, plainly not X's deeper
+       indigo either. Those three are the only place these marks are ever seen
+       side by side.
+
+       Deliberately no Facebook "f": the avatar of a third-party downloader
+       shouldn't wear someone else's trademark. -->
+  <path fill="url(#page)" d="
+    M148 96 h132 l84 84 v236 a28 28 0 0 1 -28 28 h-188 a28 28 0 0 1 -28 -28 v-292 a28 28 0 0 1 28 -28 z"/>
+
+  <path fill="#1877f2" d="
+    M232 196 h48 a12 12 0 0 1 12 12 v76 h34 a10 10 0 0 1 7.6 16.5 l-58 66 a10 10 0 0 1 -15.2 0 l-58 -66 a10 10 0 0 1 7.6 -16.5 h34 v-76 a12 12 0 0 1 12 -12 z"/>
+
+  <!-- Folded corner, as on the base mark, in the same platform colour. -->
+  <path fill="#1877f2" d="M280 96 l84 84 h-60 a24 24 0 0 1 -24 -24 z"/>
+</svg>

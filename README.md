@@ -5,7 +5,7 @@
 <h1 align="center">justthefile</h1>
 
 <p align="center">
-  <strong>Paste an X or Reddit link into a web page, or send one to a Telegram bot.<br>Get the video back as a real mp4.</strong>
+  <strong>Paste an X, Reddit or Facebook link into a web page, or send one to a Telegram bot.<br>Get the video back as a real mp4.</strong>
 </p>
 
 <p align="center">
@@ -31,6 +31,8 @@
   <a href="https://t.me/xwitter_downloader_bot"><strong>@xwitter_downloader_bot</strong></a>
   &nbsp;·&nbsp;
   <a href="https://t.me/rddt_downloader_bot"><strong>@rddt_downloader_bot</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://t.me/fbook_downloader_bot"><strong>@fbook_downloader_bot</strong></a>
 </p>
 
 ---
@@ -38,11 +40,12 @@
 ## Use it
 
 **On the web**: open **[justthefile.com](https://justthefile.com)**, paste a link
-to an X or Reddit post, pick a quality. No 50 MB ceiling, and you get the
-original.
+to an X, Reddit or Facebook post, pick a quality. No 50 MB ceiling, and you get
+the original.
 
 **On Telegram**: **[@xwitter_downloader_bot](https://t.me/xwitter_downloader_bot)**
-for X, **[@rddt_downloader_bot](https://t.me/rddt_downloader_bot)** for Reddit.
+for X, **[@rddt_downloader_bot](https://t.me/rddt_downloader_bot)** for Reddit,
+**[@fbook_downloader_bot](https://t.me/fbook_downloader_bot)** for Facebook.
 Hit **Start**, paste a link, get the video back as an mp4.
 
 Either way: nothing to install, no account to make.
@@ -70,6 +73,7 @@ Either way: nothing to install, no account to make.
 |---|---|
 | **X (Twitter)** | `x.com`, `twitter.com`, `t.co` |
 | **Reddit** | `reddit.com`, `redd.it`, `/s/` share links |
+| **Facebook** | `facebook.com`, `fb.watch`, `fb.com`, `/share/` links |
 
 ---
 

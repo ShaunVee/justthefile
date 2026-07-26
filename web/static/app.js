@@ -26,7 +26,7 @@ const KIND_LABELS = { video: "Video", gif: "GIF", photo: "Photo" };
 /* Sprite symbol per platform name. A platform with no glyph yet falls back to
    the generic link icon, so adding one to the registry never leaves a hole in
    the row. */
-const PLATFORM_ICONS = { x: "i-x", reddit: "i-reddit" };
+const PLATFORM_ICONS = { x: "i-x", reddit: "i-reddit", facebook: "i-facebook" };
 
 function icon(id) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");

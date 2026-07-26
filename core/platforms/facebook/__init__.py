@@ -31,9 +31,10 @@ NAME = "facebook"
 LABEL = "Facebook"
 HOSTS = ("facebook.com", "fb.watch", "fb.com")
 
-# None until this platform has a bot of its own. The site renders "coming soon"
-# in the bot row while it is unset, so shipping web support first costs nothing.
-TELEGRAM_BOT = None
+# The handle of this platform's own bot, without the @. The site links it in
+# the bot row and the README advertises it; a matching Profile lives in
+# bot/profile.py and a bot-facebook service in docker-compose.yml runs it.
+TELEGRAM_BOT = "fbook_downloader_bot"
 
 # Hosts the download endpoint may fetch from. A safety net: every URL it handles
 # already came from our own extraction, never from the caller. The allowlist
