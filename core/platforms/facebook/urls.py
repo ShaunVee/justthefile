@@ -153,11 +153,17 @@ async def resolve_share_link(url: str, client: httpx.AsyncClient) -> str:
         log.warning("share link %s could not be followed: %s", target, exc)
         raise LinkUnresolved(url, UNAVAILABLE) from exc
 
-    if final:
+    # A destination that is itself the login wall is not a real hop: the token
+    # resolves fine, Facebook just won't say to what from this address. Left to
+    # fall through it re-parses as no video and reads as "not a Facebook link",
+    # which sends someone off editing a link that was never the problem. It is
+    # a wall, so it is reported as one.
+    walled = relay.is_login_url(final or "")
+    if final and not walled:
         log.info("share link %s -> %s", target, final)
         return final
 
-    reason = REFUSED if status in _REFUSALS else UNAVAILABLE
+    reason = REFUSED if (walled or status in _REFUSALS) else UNAVAILABLE
     log.warning("share link %s was not followed: %d (%s)", target, status, reason)
     raise LinkUnresolved(url, reason)
 

@@ -87,22 +87,38 @@ def landed_on(response: httpx.Response) -> str:
     return response.headers.get(RELAY_FINAL_URL_HEADER) or str(response.url)
 
 
+# The paths Facebook parks a walled request on. Matched on the path alone so a
+# real page whose URL merely contains the word login is never mistaken for one.
+_WALL_PATHS = frozenset({"/login", "/login.php", "/checkpoint"})
+
+
+def is_login_url(url: str) -> bool:
+    """Whether a URL is one of Facebook's login or checkpoint walls.
+
+    Shared by the two shapes a wall arrives in: a page served under a 200 whose
+    landed URL is the login page, and a share-link redirect whose destination is
+    the login page rather than a video. Both mean the same thing, that this
+    address was turned away, and both used to slip through as something else: an
+    empty post in the first case, an unrecognised link in the second.
+    """
+    if not url:
+        return False
+    try:
+        path = httpx.URL(url).path or ""
+    except (httpx.InvalidURL, ValueError, TypeError, UnicodeError):
+        return False
+    return path.rstrip("/").lower() in _WALL_PATHS
+
+
 def login_wall(response: httpx.Response) -> bool:
-    """Whether Facebook answered by demanding a login.
+    """Whether Facebook answered a page request by demanding a login.
 
     Its logged-out limit does not refuse: it redirects to /login.php (or
     /login/) and serves that page under a 200. Taken at face value it is a post
     page with nothing in it, which is how a rate limit comes to be reported as
-    an empty post to everyone who pastes a link during one. The check is on the
-    landed path so a real page whose URL merely contains the word login is not
-    mistaken for it.
+    an empty post to everyone who pastes a link during one.
     """
-    try:
-        path = httpx.URL(landed_on(response)).path or ""
-    except (httpx.InvalidURL, ValueError, TypeError, UnicodeError):
-        return False
-    stem = path.rstrip("/").lower()
-    return stem in ("/login", "/login.php", "/checkpoint")
+    return is_login_url(landed_on(response))
 
 
 async def get(
