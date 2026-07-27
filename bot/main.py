@@ -23,12 +23,19 @@ from typing import Optional
 from urllib.parse import quote
 
 import httpx
-from telegram import InputMediaPhoto, Message, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaPhoto,
+    Message,
+    Update,
+)
 from telegram.constants import ChatAction
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import (
     AIORateLimiter,
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -466,12 +473,38 @@ def _first_url(text: str) -> Optional[str]:
 # Handlers
 # --------------------------------------------------------------------------- #
 
+# Ties the info button to its handler. The value is opaque to Telegram; it only
+# has to match on the way back.
+NOTE_CALLBACK = "note"
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     app = context.application
     cfg: Config = app.bot_data["cfg"]
     if not is_allowed(cfg, update.effective_user.id if update.effective_user else None):
         return
-    await update.message.reply_text(app.bot_data["profile"].help)
+    profile = app.bot_data["profile"]
+    # A platform with a standing caveat gets an info button under /start; the
+    # note itself lands in a popup so it doesn't crowd the help text every time.
+    markup = (
+        InlineKeyboardMarkup(
+            [[InlineKeyboardButton("ℹ️ Does it always work?", callback_data=NOTE_CALLBACK)]]
+        )
+        if profile.note
+        else None
+    )
+    await update.message.reply_text(profile.help, reply_markup=markup)
+
+
+async def on_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Answer the info button with the platform note as a popup alert."""
+    query = update.callback_query
+    if query is None:
+        return
+    note = context.application.bot_data["profile"].note
+    # show_alert makes it a dismissable dialog rather than a toast that fades
+    # before it's read. answer() with no text still clears the button's spinner.
+    await query.answer(text=note or "", show_alert=bool(note))
 
 
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -578,6 +611,7 @@ def build_application(cfg: Config) -> Application:
         {"cfg": cfg, "runtime": runtime, "queue": queue, "profile": runtime.profile}
     )
     app.add_handler(CommandHandler(["start", "help"], cmd_start))
+    app.add_handler(CallbackQueryHandler(on_note, pattern=f"^{NOTE_CALLBACK}$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     app.add_error_handler(on_error)
     return app

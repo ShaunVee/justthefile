@@ -36,6 +36,16 @@ MEDIA_HOSTS = ("v.redd.it", "i.redd.it")
 # Per-item delivery is computed below and is what the front end actually uses.
 DELIVERY = PROXY_MUX
 
+# Shown behind the info button next to the Reddit chip and the Reddit bot's
+# /start. Reddit has started refusing server-side requests, so a lookup fails
+# sometimes for reasons nothing on our end can fix. The copy owns that with a
+# straight face rather than pretending it never happens.
+NOTE = (
+    "Reddit has begun aggressively clamping down on server-originating requests "
+    "due to scraping. 10% of the time, it works every time. We apologise if it "
+    "does not."
+)
+
 
 def delivery_for(item) -> str:
     """How this particular item can reach the user.

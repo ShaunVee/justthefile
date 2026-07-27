@@ -120,6 +120,9 @@ def supported() -> list[dict[str, object]]:
             # None until that platform has a bot of its own. The page renders
             # the difference rather than hiding it.
             "telegram_bot": getattr(h, "TELEGRAM_BOT", None),
+            # A caveat worth an info button next to the chip, or None. Reddit
+            # uses it to own that server-side lookups sometimes get refused.
+            "note": getattr(h, "NOTE", None),
         }
         for h in REGISTRY
     ]

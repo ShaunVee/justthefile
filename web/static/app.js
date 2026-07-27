@@ -38,6 +38,25 @@ function icon(id) {
   return svg;
 }
 
+/* An info button carrying a platform caveat, revealed on hover and on tap.
+   A real <button> so it takes keyboard focus and a tap on touch, where there
+   is no hover; the bubble is CSS-shown for both. */
+function infoButton(label, note) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "info";
+  button.setAttribute("aria-label", `About ${label} support`);
+  button.appendChild(icon("i-info"));
+
+  const tip = document.createElement("span");
+  tip.className = "info-tip";
+  tip.setAttribute("role", "tooltip");
+  tip.textContent = note;
+  button.appendChild(tip);
+
+  return button;
+}
+
 function say(text, kind) {
   message.textContent = text;
   message.className = `message${kind ? ` ${kind}` : ""}`;
@@ -401,6 +420,7 @@ async function showSupported() {
         chip.className = "chip";
         chip.appendChild(icon(PLATFORM_ICONS[platform.name] || "i-link"));
         chip.appendChild(document.createTextNode(platform.label));
+        if (platform.note) chip.appendChild(infoButton(platform.label, platform.note));
         return chip;
       })
     );

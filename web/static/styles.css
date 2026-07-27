@@ -291,6 +291,66 @@ button:focus-visible { outline: none; box-shadow: var(--ring); }
   color: var(--muted);
 }
 
+/* Info button on a chip that carries a caveat. The tip is anchored to this
+   button and shown on hover, keyboard focus and tap (a tap focuses it, which
+   is the only trigger touch has). */
+.info {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.3rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 0;
+}
+
+.info .icon { font-size: 0.9rem; color: inherit; }
+.info:hover, .info:focus-visible { color: var(--accent); }
+.info:focus { outline: none; }
+.info:focus-visible { border-radius: 50%; box-shadow: var(--ring); }
+
+.info-tip {
+  position: absolute;
+  bottom: calc(100% + 0.5rem);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(18rem, 80vw);
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 400;
+  line-height: 1.4;
+  text-align: left;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease, visibility 0.12s ease;
+  z-index: 5;
+}
+
+.info-tip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--surface-2);
+}
+
+.info:hover .info-tip,
+.info:focus-visible .info-tip {
+  opacity: 1;
+  visibility: visible;
+}
+
 /* ---- messages ---- */
 
 .message {

@@ -31,6 +31,9 @@ log = logging.getLogger(__name__)
 SHORT_DESCRIPTION_LIMIT = 120
 DESCRIPTION_LIMIT = 512
 COMMAND_DESCRIPTION_LIMIT = 256
+# A callback-query answer shown as an alert. The note behind the /start info
+# button is delivered this way, so it has to fit.
+CALLBACK_ALERT_LIMIT = 200
 
 # The menu behind the "/" button. Shared: both bots answer the same two
 # commands. Only list commands that actually exist, or a menu entry becomes a
@@ -89,6 +92,11 @@ class Profile:
     relay_misconfigured: str = (
         "Something's misconfigured on my server, I've informed the highly trained monkey that runs me, Check back in a bit!"
     )
+    # A standing caveat about the platform, shown behind an info button on
+    # /start rather than buried in the help text. None where there's nothing to
+    # warn about. Kept under Telegram's 200-char callback-alert limit, which a
+    # test enforces. Mirrors the web note in `core.platforms`.
+    note: str | None = None
     commands: tuple[tuple[str, str], ...] = COMMANDS
 
 
@@ -175,6 +183,11 @@ REDDIT = Profile(
         "Reddit is refusing requests from my server at the moment, so I can't "
         "look up posts at all. Your link is fine and a full reddit.com link "
         "won't help: it hits the same wall. Mine to fix, so do try later."
+    ),
+    note=(
+        "Reddit has begun aggressively clamping down on server-originating "
+        "requests due to scraping. 10% of the time, it works every time. We "
+        "apologise if it does not."
     ),
 )
 
