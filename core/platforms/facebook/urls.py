@@ -1,4 +1,4 @@
-"""URL -> Facebook video ID.
+"""URL -> a Facebook media handle (a video id, or a page to read for photos).
 
 Facebook hands out even more link shapes than Reddit, and people paste all of
 them:
@@ -9,19 +9,26 @@ them:
     facebook.com/<user>/videos/<slug>/<id>/   the same with a slug in the path
     facebook.com/reel/<id>                     a reel
     facebook.com/video.php?v=<id>              the old permalink shape
-    m.facebook.com/story.php?story_fbid=<id>&id=<page>   a video inside a post
+    m.facebook.com/story.php?story_fbid=<id>&id=<page>   a post, video or photos
+    facebook.com/<user>/posts/<token>          a post permalink
+    facebook.com/photo/?fbid=<id>              a single photo
+    facebook.com/photo.php?fbid=<id>           the old photo permalink
+    facebook.com/<user>/photos/...             a photo on a page or profile
     fb.watch/<token>/                          the share sheet's shortener
     facebook.com/share/v/<token>/              the newer share link for a video
     facebook.com/share/r/<token>/              the same for a reel
+    facebook.com/share/p/<token>/              the same for a photo or post
 
-The fb.watch and /share/ forms carry no video ID at all, only an opaque token,
-so they have to be followed. That is the same problem /s/ poses on Reddit and
-t.co on X, and it is solved the same way, through the relay when one is set,
-because these hops ask facebook.com itself and a walled address fails them.
+The fb.watch and /share/ forms carry no id at all, only an opaque token, so they
+have to be followed. That is the same problem /s/ poses on Reddit and t.co on X,
+and it is solved the same way, through the relay when one is set, because these
+hops ask facebook.com itself and a walled address fails them.
 
-A reel resolves to an ID tagged with REEL_PREFIX, so the providers fetch it
-from the /reel/ path rather than the watch path, which does not reliably serve
-one. See `fetch_path`.
+A reel resolves to an id tagged with REEL_PREFIX, so the providers fetch it from
+the /reel/ path rather than the watch path, which does not reliably serve one. A
+photo, album or post resolves to a PAGE_PREFIX handle carrying its page path,
+because the media there is a picture or several and only the page says which.
+See `fetch_path`.
 
 The redirect is the only part of this module that can fail for reasons that
 have nothing to do with the link. It says so, loudly, rather than returning
@@ -65,6 +72,15 @@ _HOSTS = {
 # everywhere else untouched.
 REEL_PREFIX = "reel:"
 
+# A photo post, an album and a story carry no single "video ID": the media is a
+# picture, or several, and which it is only the page can say. So these resolve
+# to a handle tagged with this prefix whose payload is the page path to fetch,
+# and the providers extract whatever the page turns out to hold, a video or the
+# photos. `fetch_path` reads the payload back; like REEL_PREFIX it rides through
+# the cache key untouched. A watch or reel link keeps its bare id: those are the
+# proven shapes and stay on the path they always used.
+PAGE_PREFIX = "page:"
+
 # Facebook IDs are long integers. Five as a lower bound stops a short path
 # segment being mistaken for one while accepting everything Facebook issues.
 _ID = r"\d{5,}"
@@ -78,6 +94,15 @@ _VIDEOS_RE = re.compile(
 _SHARE_RE = re.compile(rf"^/share/(?:[a-z]/)?{_TOKEN}", re.IGNORECASE)
 _WATCH_TOKEN_RE = re.compile(rf"^/(?P<token>{_TOKEN})/?$", re.IGNORECASE)
 _URL_RE = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
+
+# The photo and post shapes people paste, or that a /share/p/ link resolves to.
+# A /photo/ or /photo.php link carries its id in the fbid query; a post lives at
+# /<user>/posts/<token> or /posts/<token>, and an album or plain photo often at
+# /<user>/photos/. None of these carry a bare video id, so all become a page
+# handle. A story.php is handled off its story_fbid query, not here.
+_PHOTO_RE = re.compile(r"^/photo(?:\.php)?/?$", re.IGNORECASE)
+_USER_PHOTOS_RE = re.compile(r"^/[^/]+/photos/", re.IGNORECASE)
+_POSTS_RE = re.compile(r"^/(?:[^/]+/)?posts/[^/]+", re.IGNORECASE)
 
 
 def find_url(text: str) -> Optional[str]:
@@ -114,7 +139,14 @@ def is_share_link(url: str) -> bool:
 
 
 def video_id_from_url(url: str) -> Optional[str]:
-    """Extract a video ID, or None if this isn't a recognizable Facebook video."""
+    """A resolved handle for a Facebook link, or None if the link isn't one.
+
+    Three shapes come back. A watch or reel video keeps its bare numeric id (the
+    reel one tagged with REEL_PREFIX), because those are the proven paths. A
+    photo, album or post resolves to a PAGE_PREFIX handle carrying the page path
+    to fetch, because the media there is a picture or several and only the page
+    says which. The name is historical: it hands back more than videos now.
+    """
     if not url:
         return None
 
@@ -126,32 +158,56 @@ def video_id_from_url(url: str) -> Optional[str]:
     if host not in _HOSTS:
         return None
 
-    # The ID rides in the query on the watch, video.php and story.php shapes.
+    # A bare video id rides in the query on the watch and video.php shapes.
     params = parsed.params
-    for key in ("v", "story_fbid"):
-        value = params.get(key)
-        if value and value.isdigit():
-            return value
+    v = params.get("v")
+    if v and v.isdigit():
+        return v
 
     path = parsed.path or ""
     reel = _REEL_RE.match(path)
     if reel:
         return f"{REEL_PREFIX}{reel.group('id')}"
     videos = _VIDEOS_RE.match(path)
-    return videos.group("id") if videos else None
+    if videos:
+        return videos.group("id")
+
+    # A story is a post permalink and can hold a video or photos, so it is a
+    # page to fetch and read, not a bare id. Its id lives in story_fbid; the id
+    # query names the page it belongs to and the page path needs it.
+    story = params.get("story_fbid")
+    if story and story.isdigit():
+        page = params.get("id")
+        query = f"story_fbid={story}" + (
+            f"&id={page}" if page and page.isdigit() else ""
+        )
+        base = path.rstrip("/") or "/story.php"
+        return f"{PAGE_PREFIX}{base}?{query}"
+
+    # A plain photo carries its id in fbid; the rest are known by their path.
+    if _PHOTO_RE.match(path):
+        fbid = params.get("fbid")
+        return f"{PAGE_PREFIX}/photo/?fbid={fbid}" if fbid and fbid.isdigit() else None
+    if _USER_PHOTOS_RE.match(path) or _POSTS_RE.match(path):
+        return f"{PAGE_PREFIX}{path.rstrip('/')}"
+
+    return None
 
 
 def fetch_path(post_id: str) -> str:
-    """The page path to fetch for a resolved ID, reel or plain video.
+    """The page path to fetch for a resolved handle: reel, watch video or post.
 
     A reel and a watch video are the same kind of page carrying the same media,
     but they live at different paths and the watch path does not reliably serve
-    a reel. The REEL_PREFIX set by `video_id_from_url` is what survives this far
-    to tell them apart; the providers prepend their own host to what this
-    returns.
+    a reel. A PAGE_PREFIX handle already is a path, carried whole from the link;
+    it is a photo, album or post the provider reads for whatever it holds. The
+    prefixes set by `video_id_from_url` are what survive this far to tell the
+    shapes apart; the providers prepend their own host to what this returns.
     """
     if post_id.startswith(REEL_PREFIX):
         return f"/reel/{post_id[len(REEL_PREFIX):]}"
+    if post_id.startswith(PAGE_PREFIX):
+        return post_id[len(PAGE_PREFIX):]
     return f"/watch/?v={post_id}"
 
 

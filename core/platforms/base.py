@@ -123,6 +123,11 @@ class Resolution:
     author: Optional[str] = None
     text: Optional[str] = None
     source: Optional[str] = None  # which upstream endpoint answered
+    # A one-line heads-up that is not the post's own caption: set when something
+    # about the result needs saying, such as an album we could only fetch part
+    # of. Platforms that never have one leave it None, and both the bot and the
+    # web surface it when it is present.
+    notice: Optional[str] = None
 
     def __bool__(self) -> bool:
         return bool(self.items)

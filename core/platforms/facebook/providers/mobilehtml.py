@@ -1,8 +1,8 @@
-"""Primary provider: the video's own page JSON.
+"""Primary provider: the post's own page JSON, for a video or its photos.
 
 Facebook embeds the media in a script blob on the page it serves a logged-out
-browser. Across the shapes that matter the keys are stable enough to lead with,
-best first:
+browser. For a video, across the shapes that matter the keys are stable enough
+to lead with, best first:
 
     playable_url_quality_hd    HD progressive mp4
     playable_url               SD progressive mp4
@@ -13,6 +13,11 @@ All four are progressive mp4 with audio already muxed, which is why this
 platform stays flat PROXY. The values arrive JSON-escaped (\\/, \\u0025), so
 they are decoded through json rather than by unescaping in a regex, which is
 what keeps a signed fbcdn query intact.
+
+A photo post carries its pictures in the same blob, as signed scontent.*.fbcdn
+URLs the CDN also serves without a session, so they proxy exactly as the video
+does. See `_extract_photos`. Which a page holds, a video or photos, is the
+page's to say, so `parse` reads for both and returns whatever is there.
 
 Fetched through the relay, because facebook.com walls the VPS and, worse,
 answers a wall with a 200 login page rather than a refusal: see
@@ -33,7 +38,7 @@ from typing import Any, Optional
 
 import httpx
 
-from core.models import VIDEO, MediaItem, Variant
+from core.models import PHOTO, VIDEO, MediaItem, Variant
 
 from ...base import UpstreamRefused
 from .. import relay, urls
@@ -87,6 +92,53 @@ def _extract(html: str) -> list[Variant]:
     return variants
 
 
+# A photo post embeds its pictures the same way a video does, in the page's
+# script JSON, as signed scontent.*.fbcdn.net URLs the CDN serves without a
+# session. Two shapes hold them:
+#
+#     "photo_image":{"uri":"<url>"}                      a single photo
+#     "all_subattachments":{"count":N,"nodes":[ ... ]}   an album, each node a
+#         Photo whose "image":{"uri":"<url>"} is one picture
+#
+# Only the first few of a long album are on this page; Facebook lazy-loads the
+# rest behind a logged-in GraphQL call this project will not make. `_album_count`
+# reads the declared total so the caller can say "5 of 10" rather than quietly
+# pass off half the post as the whole of it. See the platform docstring.
+_ALBUM_IMAGE_RE = re.compile(r'"__typename":"Photo"[^}]*?"image":\{"uri":"([^"]+)"')
+_PHOTO_IMAGE_RE = re.compile(r'"photo_image":\{"uri":"([^"]+)"')
+_ALBUM_COUNT_RE = re.compile(r'"all_subattachments":\{"count":(\d+)')
+# The stable id in an fbcdn filename (<a>_<b>_<c>_n.jpg). The same picture is
+# served at several sizes and repeated across the page's two data blobs; this is
+# what dedupes it to one entry while keeping first-seen order.
+_IMG_ID_RE = re.compile(r"/(\d+_\d+_\d+)_n\.")
+
+
+def _image_id(url: str) -> str:
+    match = _IMG_ID_RE.search(url)
+    return match.group(1) if match else url
+
+
+def _extract_photos(html: str) -> list[str]:
+    seen: set[str] = set()
+    urls: list[str] = []
+    # Album nodes first, then a single/primary photo_image. In practice a page is
+    # one or the other, so only one pattern matches and the order is the post's.
+    for raw in _ALBUM_IMAGE_RE.findall(html) + _PHOTO_IMAGE_RE.findall(html):
+        url = _decode(raw)
+        if not url:
+            continue
+        key = _image_id(url)
+        if key not in seen:
+            seen.add(key)
+            urls.append(url)
+    return urls
+
+
+def _album_count(html: str) -> int:
+    match = _ALBUM_COUNT_RE.search(html)
+    return int(match.group(1)) if match else 0
+
+
 def _text(html: str) -> Optional[str]:
     match = _OG_TITLE_RE.search(html)
     if not match:
@@ -101,15 +153,41 @@ def _author(html: str) -> Optional[str]:
 
 
 def parse(html: str, video_id: str) -> dict[str, Any]:
-    """Map a video page into the pieces the platform module needs. Pure."""
+    """Map a page into the pieces the platform module needs. Pure.
+
+    A page holds a video, or photos, or in principle both; whichever it holds is
+    what comes back. Video leads the item list, since a post with a video is a
+    video post, and the photos follow one item each, the shape the bot and web
+    already expect from Reddit and X.
+    """
     variants = _extract(html)
-    if not variants:
+    photos = _extract_photos(html)
+    if not variants and not photos:
         return {}
-    return {
-        "items": [MediaItem(kind=VIDEO, variants=tuple(variants))],
+
+    items: list[MediaItem] = []
+    if variants:
+        items.append(MediaItem(kind=VIDEO, variants=tuple(variants)))
+    for url in photos:
+        items.append(
+            MediaItem(kind=PHOTO, variants=(Variant(url=url, content_type="image/jpeg"),))
+        )
+
+    result: dict[str, Any] = {
+        "items": items,
         "author": _author(html),
         "text": _text(html),
     }
+    # Only part of a long album is on the page, so say five of ten rather than
+    # hand over five and let it read as the whole post. Carried as a notice, not
+    # folded into the caption, so the bot and web can show it as what it is.
+    total = _album_count(html)
+    if photos and total > len(photos):
+        result["notice"] = (
+            f"Showing {len(photos)} of {total} images. Facebook only serves the "
+            "rest to people who are logged in."
+        )
+    return result
 
 
 async def fetch(video_id: str, client: httpx.AsyncClient) -> dict[str, Any]:

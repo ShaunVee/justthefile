@@ -67,4 +67,5 @@ async def fetch(post_id: str, client: httpx.AsyncClient) -> Resolution:
         author=result.get("author"),
         text=result.get("text"),
         source=result.get("source"),
+        notice=result.get("notice"),
     )

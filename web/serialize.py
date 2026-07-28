@@ -152,6 +152,7 @@ async def describe(
         "delivery": delivery,
         "author": post.author,
         "text": post.text,
+        "notice": post.notice,
         "source": post.source,
         "media": [m for m in media if m["variants"]],
     }

@@ -190,6 +190,11 @@ class Runtime:
             if photos:
                 await self._deliver_photos(bot, job, photos, status, workdir)
 
+            # A heads-up that isn't the post's own text, such as an album we
+            # could only fetch part of. Sent last so it trails the media.
+            if post.notice:
+                await bot.send_message(job.chat_id, post.notice)
+
             await status.done()
 
         finally:
