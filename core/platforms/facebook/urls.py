@@ -9,8 +9,8 @@ them:
     facebook.com/<user>/videos/<slug>/<id>/   the same with a slug in the path
     facebook.com/reel/<id>                     a reel
     facebook.com/video.php?v=<id>              the old permalink shape
-    m.facebook.com/story.php?story_fbid=<id>&id=<page>   a post, video or photos
-    facebook.com/<user>/posts/<token>          a post permalink
+    m.facebook.com/story.php?story_fbid=<id>&id=<page>   a video inside a post
+    facebook.com/<user>/posts/<token>          a photo post permalink
     facebook.com/photo/?fbid=<id>              a single photo
     facebook.com/photo.php?fbid=<id>           the old photo permalink
     facebook.com/<user>/photos/...             a photo on a page or profile
@@ -158,11 +158,13 @@ def video_id_from_url(url: str) -> Optional[str]:
     if host not in _HOSTS:
         return None
 
-    # A bare video id rides in the query on the watch and video.php shapes.
+    # A bare video id rides in the query on the watch, video.php and story.php
+    # shapes.
     params = parsed.params
-    v = params.get("v")
-    if v and v.isdigit():
-        return v
+    for key in ("v", "story_fbid"):
+        value = params.get(key)
+        if value and value.isdigit():
+            return value
 
     path = parsed.path or ""
     reel = _REEL_RE.match(path)
@@ -171,18 +173,6 @@ def video_id_from_url(url: str) -> Optional[str]:
     videos = _VIDEOS_RE.match(path)
     if videos:
         return videos.group("id")
-
-    # A story is a post permalink and can hold a video or photos, so it is a
-    # page to fetch and read, not a bare id. Its id lives in story_fbid; the id
-    # query names the page it belongs to and the page path needs it.
-    story = params.get("story_fbid")
-    if story and story.isdigit():
-        page = params.get("id")
-        query = f"story_fbid={story}" + (
-            f"&id={page}" if page and page.isdigit() else ""
-        )
-        base = path.rstrip("/") or "/story.php"
-        return f"{PAGE_PREFIX}{base}?{query}"
 
     # A plain photo carries its id in fbid; the rest are known by their path.
     if _PHOTO_RE.match(path):
@@ -211,22 +201,63 @@ def fetch_path(post_id: str) -> str:
     return f"/watch/?v={post_id}"
 
 
+def _lookup_target(parsed: httpx.URL) -> str:
+    """Where to send the token lookup: mbasic for a /share/ link, else as-is.
+
+    From the walled VPS, and from the relay's own datacenter IP, www answers a
+    share link by bouncing to /login *before* it resolves the token, so the
+    canonical URL never appears: the wall's next= still holds the share link.
+    mbasic resolves the token first and only then asks for a login, so its wall
+    parks the real post URL in next=, which `_resolved_canonical` reads back out.
+    fb.watch is its own shortener host and cannot be swapped, so it is asked as
+    it came; its wall, if any, is read the same way.
+    """
+    host = (parsed.host or "").lower()
+    if host.endswith("fb.watch"):
+        return str(parsed)
+    return str(parsed.copy_with(scheme="https", host="mbasic.facebook.com"))
+
+
+def _is_real_post(url: str) -> bool:
+    """A Facebook URL that actually names a post, not a share or login page."""
+    try:
+        host, _ = _host_of(url)
+    except (httpx.InvalidURL, ValueError, TypeError, UnicodeError):
+        return False
+    if host not in _HOSTS:
+        return False
+    return not (relay.is_login_url(url) or is_share_link(url))
+
+
+def _resolved_canonical(landed: str) -> Optional[str]:
+    """The post URL a share lookup produced, or None if it produced none.
+
+    Either the URL it landed on already names a post, or it landed on mbasic's
+    login wall, which carries the resolved post URL in its next= query. Anything
+    else, a wall that leaked nothing or a page still on the share link, is no
+    answer at all.
+    """
+    if not landed:
+        return None
+    if _is_real_post(landed):
+        return landed
+    try:
+        nxt = httpx.URL(landed).params.get("next")
+    except (httpx.InvalidURL, ValueError, TypeError, UnicodeError):
+        nxt = None
+    return nxt if nxt and _is_real_post(nxt) else None
+
+
 async def resolve_share_link(url: str, client: httpx.AsyncClient) -> str:
-    """Follow an fb.watch or /share/ link to whatever it really points at.
+    """Follow an fb.watch or /share/ link to the post it really points at.
 
-    Fetched as a page, following the whole redirect chain, and the URL it lands
-    on is read back from `relay.landed_on`. Facebook now answers the *first* hop
-    of a share link with a 302 to /login and only reveals the canonical /reel/ or
-    /watch address further down the chain, so reading a single hop's Location,
-    which is what this did, saw the wall and gave up on a link that resolves fine
-    when followed to the end. That is why a shared video read as refused while the
-    reel it pointed at, pasted directly, played.
-
-    Sent through the relay when one is configured: this hop asks facebook.com
-    itself, so a blocked address fails it as surely as it fails the providers.
+    Asked through mbasic, not www, for the reason in `_lookup_target`: the
+    canonical URL only survives the wall on the mbasic host. Sent through the
+    relay when one is configured, because this hop asks facebook.com itself and a
+    blocked address fails it as surely as it fails the providers.
 
     Raises LinkUnresolved rather than handing back the URL it was given: that
-    return value parsed as no video at all and was indistinguishable from a link
+    return value parsed as no post at all and was indistinguishable from a link
     that was never Facebook's. The reason rides along, because "Facebook refused
     us" and "Facebook didn't answer in time" deserve opposite advice.
     """
@@ -235,37 +266,30 @@ async def resolve_share_link(url: str, client: httpx.AsyncClient) -> str:
     except (httpx.InvalidURL, ValueError, TypeError, UnicodeError) as exc:
         raise LinkUnresolved(url) from exc
 
-    target = str(parsed)
+    target = _lookup_target(parsed)
     try:
         response = await relay.get(target, client)
     except httpx.HTTPError as exc:
         log.warning("share link %s could not be followed: %s", target, exc)
         raise LinkUnresolved(url, UNAVAILABLE) from exc
 
-    # A wall arrives two ways: an honest refusal status, or a 200 whose chain
-    # ended on the login page. Both mean this address was turned away, not that
-    # the link is bad, so both are reported as a refusal rather than left to
-    # re-parse as "not a Facebook link".
     if response.status_code in _REFUSALS:
         log.warning("share link %s was refused: %d", target, response.status_code)
         raise LinkUnresolved(url, REFUSED)
-    if relay.login_wall(response):
-        log.warning("share link %s bounced to a login wall", target)
-        raise LinkUnresolved(url, REFUSED)
+
+    canonical = _resolved_canonical(relay.landed_on(response))
+    if canonical:
+        log.info("share link %s -> %s", target, canonical)
+        return canonical
+
+    # Nothing resolvable came back. A login wall that leaked no post URL is
+    # Facebook refusing this address; anything else did not answer in time.
     if response.is_error:
         log.warning("share link %s answered %d", target, response.status_code)
         raise LinkUnresolved(url, UNAVAILABLE)
-
-    final = relay.landed_on(response)
-    # Landing back on a share link is the chain not resolving: Facebook served
-    # the token page without ever redirecting to the video. Reported as
-    # unresolved rather than returned, for the same reason a wall is.
-    if final and not is_share_link(final):
-        log.info("share link %s -> %s", target, final)
-        return final
-
-    log.warning("share link %s did not resolve to a video", target)
-    raise LinkUnresolved(url, UNAVAILABLE)
+    reason = REFUSED if relay.login_wall(response) else UNAVAILABLE
+    log.warning("share link %s did not resolve to a post (%s)", target, reason)
+    raise LinkUnresolved(url, reason)
 
 
 async def extract_video_id(text: str, client: httpx.AsyncClient) -> Optional[str]:
