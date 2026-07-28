@@ -25,10 +25,8 @@ and wrong for a process that reloads config.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-from typing import Optional
 
 import httpx
 
@@ -148,49 +146,3 @@ async def get(
     )
     _reject_unauthorized(response.status_code)
     return response
-
-
-async def redirect_of(
-    url: str, client: httpx.AsyncClient, *, timeout: float = 10.0
-) -> tuple[int, Optional[str]]:
-    """Where `url` points, as (status, destination or None).
-
-    Split from `get` because an fb.watch or /share/ link is only ever asked one
-    question: what does this token mean. The body behind it is never wanted, and
-    through the relay it is never even fetched.
-
-    None as the destination means the hop did not happen, and the status says
-    whether that was a refusal or something else. Both are the caller's call.
-    """
-    base, key = _relay()
-
-    if not base:
-        response = await client.get(
-            url, headers=HEADERS, follow_redirects=True, timeout=timeout
-        )
-        final = str(response.url)
-        moved = response.is_success and final != url
-        return response.status_code, final if moved else None
-
-    response = await client.get(
-        base,
-        params={"url": url, "mode": "redirect"},
-        headers={"X-Relay-Key": key},
-        timeout=timeout,
-        follow_redirects=True,
-    )
-    _reject_unauthorized(response.status_code)
-    if not response.is_success:
-        return response.status_code, None
-
-    try:
-        payload = response.json()
-    except (json.JSONDecodeError, ValueError) as exc:
-        # The relay answering with something other than its own JSON means the
-        # relay is broken, not Facebook. Reported as a 502 so it cannot be
-        # mistaken for Facebook's own refusal.
-        log.warning("relay returned unreadable JSON for %s: %s", url, exc)
-        return 502, None
-
-    final = payload.get("final")
-    return int(payload.get("status") or 0), final if isinstance(final, str) else None

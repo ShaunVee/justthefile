@@ -158,6 +158,14 @@ def fetch_path(post_id: str) -> str:
 async def resolve_share_link(url: str, client: httpx.AsyncClient) -> str:
     """Follow an fb.watch or /share/ link to whatever it really points at.
 
+    Fetched as a page, following the whole redirect chain, and the URL it lands
+    on is read back from `relay.landed_on`. Facebook now answers the *first* hop
+    of a share link with a 302 to /login and only reveals the canonical /reel/ or
+    /watch address further down the chain, so reading a single hop's Location,
+    which is what this did, saw the wall and gave up on a link that resolves fine
+    when followed to the end. That is why a shared video read as refused while the
+    reel it pointed at, pasted directly, played.
+
     Sent through the relay when one is configured: this hop asks facebook.com
     itself, so a blocked address fails it as surely as it fails the providers.
 
@@ -173,24 +181,35 @@ async def resolve_share_link(url: str, client: httpx.AsyncClient) -> str:
 
     target = str(parsed)
     try:
-        status, final = await relay.redirect_of(target, client)
+        response = await relay.get(target, client)
     except httpx.HTTPError as exc:
         log.warning("share link %s could not be followed: %s", target, exc)
         raise LinkUnresolved(url, UNAVAILABLE) from exc
 
-    # A destination that is itself the login wall is not a real hop: the token
-    # resolves fine, Facebook just won't say to what from this address. Left to
-    # fall through it re-parses as no video and reads as "not a Facebook link",
-    # which sends someone off editing a link that was never the problem. It is
-    # a wall, so it is reported as one.
-    walled = relay.is_login_url(final or "")
-    if final and not walled:
+    # A wall arrives two ways: an honest refusal status, or a 200 whose chain
+    # ended on the login page. Both mean this address was turned away, not that
+    # the link is bad, so both are reported as a refusal rather than left to
+    # re-parse as "not a Facebook link".
+    if response.status_code in _REFUSALS:
+        log.warning("share link %s was refused: %d", target, response.status_code)
+        raise LinkUnresolved(url, REFUSED)
+    if relay.login_wall(response):
+        log.warning("share link %s bounced to a login wall", target)
+        raise LinkUnresolved(url, REFUSED)
+    if response.is_error:
+        log.warning("share link %s answered %d", target, response.status_code)
+        raise LinkUnresolved(url, UNAVAILABLE)
+
+    final = relay.landed_on(response)
+    # Landing back on a share link is the chain not resolving: Facebook served
+    # the token page without ever redirecting to the video. Reported as
+    # unresolved rather than returned, for the same reason a wall is.
+    if final and not is_share_link(final):
         log.info("share link %s -> %s", target, final)
         return final
 
-    reason = REFUSED if (walled or status in _REFUSALS) else UNAVAILABLE
-    log.warning("share link %s was not followed: %d (%s)", target, status, reason)
-    raise LinkUnresolved(url, reason)
+    log.warning("share link %s did not resolve to a video", target)
+    raise LinkUnresolved(url, UNAVAILABLE)
 
 
 async def extract_video_id(text: str, client: httpx.AsyncClient) -> Optional[str]:
