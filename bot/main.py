@@ -30,7 +30,7 @@ from telegram import (
     Message,
     Update,
 )
-from telegram.constants import ChatAction
+from telegram.constants import ChatAction, ChatType
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import (
     AIORateLimiter,
@@ -51,7 +51,7 @@ from core.platforms import (
 )
 
 from . import profile, transcode
-from .access import is_allowed
+from .access import chat_permitted, is_allowed
 from .cache import FileIdCache
 from .config import Config
 from .jobs import Job, JobQueue, Limits, QueueFull
@@ -175,6 +175,21 @@ class Runtime:
                     "been deleted, be from a private account, or be age-restricted.",
                 )
                 return
+
+            # The post is real and has media on the way, so in a group we clear
+            # the link that asked for it: the result is just the link giving way
+            # to the file. Decided upstream, and only ever a pure-link message,
+            # never one with the sender's own words in it. This needs the bot to
+            # be a group admin with delete rights, so a refusal is logged and
+            # shrugged off, not surfaced. Done before delivery on purpose: the
+            # only failures left are size ones, which reply with a site link of
+            # their own, so there's nothing the vanished link was still needed for.
+            source = job.payload.get("delete")
+            if source is not None:
+                try:
+                    await source.delete()
+                except TelegramError as exc:
+                    log.info("could not delete source message: %s", exc)
 
             # Keep the original index: it's part of the cache key.
             playable = [
@@ -474,6 +489,44 @@ def _first_url(text: str) -> Optional[str]:
     return match.group(0) if match else None
 
 
+def _is_pure_link(text: str, url: Optional[str]) -> bool:
+    """True when the message is the link and nothing else.
+
+    Only these are cleared in a group. A message that is link-plus-commentary
+    belongs to its sender: deleting it to post the media would eat their words.
+    Whitespace around the link doesn't count as commentary.
+    """
+    return bool(url) and (text or "").strip() == url
+
+
+def _in_permitted_group(cfg: Config, update: Update) -> bool:
+    """Whether this update is from a group chat the bot is allowed to serve.
+
+    Group access is by chat, not by member: an allowlisted group is open to
+    everyone in it. A private chat is never a "group" here and takes the
+    per-user path instead.
+    """
+    chat = update.effective_chat
+    if chat is None or chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+        return False
+    return chat_permitted(cfg, chat.id)
+
+
+def _permitted(cfg: Config, update: Update) -> bool:
+    """The single access gate cmd_start and on_message share, so the DM rule and
+    the group rule can never drift apart.
+
+    A DM needs an allowlisted user; an allowlisted group is open to everyone in
+    it. A blocked user is denied in either, which is the one thing the group
+    path has to add on top of is_allowed.
+    """
+    user = update.effective_user
+    uid = user.id if user else None
+    if uid is not None and uid in cfg.blocked_user_ids:
+        return False
+    return is_allowed(cfg, uid) or _in_permitted_group(cfg, update)
+
+
 # --------------------------------------------------------------------------- #
 # Handlers
 # --------------------------------------------------------------------------- #
@@ -486,7 +539,7 @@ NOTE_CALLBACK = "note"
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     app = context.application
     cfg: Config = app.bot_data["cfg"]
-    if not is_allowed(cfg, update.effective_user.id if update.effective_user else None):
+    if not _permitted(cfg, update):
         return
     profile = app.bot_data["profile"]
     # A platform with a standing caveat gets an info button under /start; the
@@ -519,9 +572,14 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     queue: JobQueue = app.bot_data["queue"]
 
     user = update.effective_user
-    if not is_allowed(cfg, user.id if user else None):
+    if not _permitted(cfg, update):
         log.info("ignoring message from %s", user.id if user else "unknown")
         return
+
+    # An allowlisted group runs the bot silently, DMs keep the running status
+    # they've always had. group_ok gates both the quiet mode and the link
+    # deletion below.
+    group_ok = _in_permitted_group(cfg, update)
 
     message = update.message
     if message is None or not message.text:
@@ -551,20 +609,39 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await message.reply_text(runtime.profile.unknown_link)
         return
 
-    status = await message.reply_text("Queued…")
+    # No "Queued…" line and no progress edits in a group: the result there is
+    # just the link giving way to the media, nothing else.
+    status = None if group_ok else await message.reply_text("Queued…")
+
+    url = _first_url(message.text)
+    # Clear the request only in a group, and only when it's a bare link with no
+    # words of the sender's own to lose. The deletion itself happens in the
+    # worker, once the post is known to be real, so an unfetchable link is left
+    # in place with an error beside it.
+    delete_source = message if (group_ok and _is_pure_link(message.text, url)) else None
+
     job = Job(
-        user_id=user.id,
+        user_id=user.id if user else message.chat_id,
         chat_id=message.chat_id,
         post_id=post_id,
-        # The original link is kept for the one case that needs it: pointing
-        # someone at the same post on the site when the upload cap defeats us.
-        payload={"bot": app.bot, "status": status, "url": _first_url(message.text)},
+        # url: kept for the one case that needs it, pointing someone at the same
+        # post on the site when the upload cap defeats us. delete: the message to
+        # remove on success, or None to leave it.
+        payload={
+            "bot": app.bot,
+            "status": status,
+            "url": url,
+            "delete": delete_source,
+        },
     )
 
     try:
         await queue.submit(job)
     except QueueFull as exc:
-        await status.edit_text(str(exc))
+        if status is not None:
+            await status.edit_text(str(exc))
+        else:
+            await message.reply_text(str(exc))
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:

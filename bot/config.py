@@ -53,6 +53,25 @@ def _token(platform: str) -> str:
     return ""
 
 
+def _chat_ids_raw(platform: str) -> str:
+    """The group chat IDs this platform's bot will serve, as a raw string.
+
+    Mirrors _token exactly: a suffixed ALLOWED_CHAT_IDS_<PLATFORM> wins, and the
+    unsuffixed ALLOWED_CHAT_IDS is honoured only for the default platform (X).
+    That asymmetry is the point. Adding the bot to a group opens it to everyone
+    in that group, so this must not leak from the X bot's .env to the Reddit or
+    Facebook bots reading the same file: they opt in by their own suffixed name
+    or not at all. Today only X has group support, which is exactly the
+    unsuffixed spelling covering the default platform and no other.
+    """
+    suffixed = os.environ.get(f"ALLOWED_CHAT_IDS_{platform.upper()}", "").strip()
+    if suffixed:
+        return suffixed
+    if platform == DEFAULT_PLATFORM:
+        return os.environ.get("ALLOWED_CHAT_IDS", "").strip()
+    return ""
+
+
 @dataclass(frozen=True)
 class Config:
     bot_token: str
@@ -60,6 +79,9 @@ class Config:
     access_mode: str = "private"
     allowed_user_ids: frozenset[int] = field(default_factory=frozenset)
     blocked_user_ids: frozenset[int] = field(default_factory=frozenset)
+    # Group chats the bot serves, everyone in them included. Empty for a
+    # DM-only bot, which is every bot but the X one for now. See _chat_ids_raw.
+    allowed_chat_ids: frozenset[int] = field(default_factory=frozenset)
 
     max_upload_mb: int = 49
     max_concurrent_downloads: int = 3
@@ -124,6 +146,7 @@ class Config:
             access_mode=mode,
             allowed_user_ids=allowed,
             blocked_user_ids=_ids(os.environ.get("BLOCKED_USER_IDS", "")),
+            allowed_chat_ids=_ids(_chat_ids_raw(platform)),
             max_upload_mb=_int("MAX_UPLOAD_MB", 49),
             max_concurrent_downloads=_int("MAX_CONCURRENT_DOWNLOADS", 3),
             max_concurrent_transcodes=_int("MAX_CONCURRENT_TRANSCODES", 1),
