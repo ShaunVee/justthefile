@@ -189,7 +189,19 @@ class Runtime:
                 try:
                     await source.delete()
                 except TelegramError as exc:
-                    log.info("could not delete source message: %s", exc)
+                    # A message already gone is benign and stays quiet. Anything
+                    # else is almost always the bot missing the admin "Delete
+                    # messages" right, which is silent otherwise: name the fix
+                    # at warning level so it's findable in the logs.
+                    if "not found" in str(exc).lower():
+                        log.info("source message already gone: %s", exc)
+                    else:
+                        log.warning(
+                            "couldn't delete the link message in chat %s (%s). "
+                            'Make the bot a group admin with the "Delete '
+                            'messages" right.',
+                            job.chat_id, exc,
+                        )
 
             # Keep the original index: it's part of the cache key.
             playable = [
@@ -499,6 +511,11 @@ def _is_pure_link(text: str, url: Optional[str]) -> bool:
     return bool(url) and (text or "").strip() == url
 
 
+def _is_group_chat(update: Update) -> bool:
+    chat = update.effective_chat
+    return chat is not None and chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
+
+
 def _in_permitted_group(cfg: Config, update: Update) -> bool:
     """Whether this update is from a group chat the bot is allowed to serve.
 
@@ -506,25 +523,28 @@ def _in_permitted_group(cfg: Config, update: Update) -> bool:
     everyone in it. A private chat is never a "group" here and takes the
     per-user path instead.
     """
-    chat = update.effective_chat
-    if chat is None or chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
-        return False
-    return chat_permitted(cfg, chat.id)
+    return _is_group_chat(update) and chat_permitted(cfg, update.effective_chat.id)
 
 
 def _permitted(cfg: Config, update: Update) -> bool:
     """The single access gate cmd_start and on_message share, so the DM rule and
     the group rule can never drift apart.
 
-    A DM needs an allowlisted user; an allowlisted group is open to everyone in
-    it. A blocked user is denied in either, which is the one thing the group
-    path has to add on top of is_allowed.
+    The two gates are separate, not combined: a group is judged by its chat ID
+    alone, a DM by its user ID alone. An allowlisted user does NOT get the bot in
+    an arbitrary group they happen to share with it: that path used to let an
+    owner's own test message through in a non-allowlisted group, which both
+    leaked the bot into groups it wasn't meant for and hid the misconfiguration,
+    since the "ignoring …" log that carries the chat ID never fired. A blocked
+    user is denied in either.
     """
     user = update.effective_user
     uid = user.id if user else None
     if uid is not None and uid in cfg.blocked_user_ids:
         return False
-    return is_allowed(cfg, uid) or _in_permitted_group(cfg, update)
+    if _is_group_chat(update):
+        return chat_permitted(cfg, update.effective_chat.id)
+    return is_allowed(cfg, uid)
 
 
 # --------------------------------------------------------------------------- #
@@ -573,7 +593,15 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     user = update.effective_user
     if not _permitted(cfg, update):
-        log.info("ignoring message from %s", user.id if user else "unknown")
+        # The chat id is here on purpose: it's the value that goes in
+        # ALLOWED_CHAT_IDS, and this line is the easiest way to read it off a
+        # group the bot has been added to but not yet allowlisted.
+        chat = update.effective_chat
+        log.info(
+            "ignoring message from %s in chat %s",
+            user.id if user else "unknown",
+            chat.id if chat else "unknown",
+        )
         return
 
     # An allowlisted group runs the bot silently, DMs keep the running status
