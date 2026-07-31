@@ -675,9 +675,9 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
 
-    # An allowlisted group runs the bot silently, DMs keep the running status
-    # they've always had. group_ok gates both the quiet mode and the link
-    # deletion below.
+    # In an allowlisted group the bot answers only real X links and clears the
+    # bare-link message afterwards; a DM answers everything and clears nothing.
+    # group_ok gates both departures.
     group_ok = _in_permitted_group(cfg, update)
 
     message = update.message
@@ -688,7 +688,8 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         post_id = await runtime.handler.identify(message.text, runtime.client)
     except RelayMisconfigured as exc:
         log.error("%s", exc)
-        await message.reply_text(runtime.profile.relay_misconfigured)
+        if not group_ok:
+            await message.reply_text(runtime.profile.relay_misconfigured)
         return
     except LinkUnresolved as exc:
         # The link is one we handle; the site it hides behind wouldn't answer.
@@ -697,20 +698,30 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         # being ignored are told apart, because only one of them is worth
         # retrying and the wrong advice wastes the sender's time twice.
         log.warning("could not resolve %s (%s)", exc.url, exc.reason)
-        await message.reply_text(
-            runtime.profile.upstream_blocked
-            if exc.refused
-            else runtime.profile.link_unresolved
-        )
+        if not group_ok:
+            await message.reply_text(
+                runtime.profile.upstream_blocked
+                if exc.refused
+                else runtime.profile.link_unresolved
+            )
         return
 
     if not post_id:
-        await message.reply_text(runtime.profile.unknown_link)
+        # In a group the bot is one voice among many: a message that isn't an X
+        # link simply isn't for it, so it stays quiet rather than answering
+        # every line of chat with "that's not an X link". A DM is a direct
+        # request, so there the miss is worth a reply. The pre-resolution errors
+        # above are held to the same rule, for the same reason.
+        if not group_ok:
+            await message.reply_text(runtime.profile.unknown_link)
         return
 
-    # No "Queued…" line and no progress edits in a group: the result there is
-    # just the link giving way to the media, nothing else.
-    status = None if group_ok else await message.reply_text("Queued…")
+    # A single status message, edited in place as the job churns and deleted
+    # once the media is out. In a group it's the acknowledgement that the link
+    # was picked up; in a DM it's the running progress it's always shown. Either
+    # way it's one message, throttled, not a stream of them, and only ever for a
+    # confirmed link: group chatter never reaches this point.
+    status = await message.reply_text("Queued…")
 
     url = _first_url(message.text)
     # Clear the request only in a group, and only when it's a bare link with no
@@ -737,10 +748,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     try:
         await queue.submit(job)
     except QueueFull as exc:
-        if status is not None:
-            await status.edit_text(str(exc))
-        else:
-            await message.reply_text(str(exc))
+        await status.edit_text(str(exc))
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
