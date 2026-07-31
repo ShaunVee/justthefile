@@ -176,23 +176,44 @@ class Runtime:
                 )
                 return
 
-            # The post is real and has media on the way, so in a group we clear
-            # the link that asked for it: the result is just the link giving way
-            # to the file. Decided upstream, and only ever a pure-link message,
-            # never one with the sender's own words in it. This needs the bot to
-            # be a group admin with delete rights, so a refusal is logged and
-            # shrugged off, not surfaced. Done before delivery on purpose: the
-            # only failures left are size ones, which reply with a site link of
-            # their own, so there's nothing the vanished link was still needed for.
+            # The handle that posted it, shown as a caption under the media. One
+            # caption for the whole post, so a multi-video post credits the same
+            # account on each file rather than repeating the tweet's own text.
+            caption = _caption(post.author)
+
+            # Keep the original index: it's part of the cache key.
+            playable = [
+                (i, item) for i, item in enumerate(post.items) if item.kind != PHOTO
+            ]
+            delivered = True  # every piece landed; one failure turns this off
+            for position, (index, item) in enumerate(playable, start=1):
+                ok = await self._deliver_video(
+                    bot, job, item, index, status, limits, workdir,
+                    total=len(playable), position=position, caption=caption,
+                )
+                delivered = delivered and ok
+
+            photos = [item for item in post.items if item.kind == PHOTO]
+            if photos:
+                delivered = (
+                    await self._deliver_photos(
+                        bot, job, photos, status, workdir, caption=caption
+                    )
+                    and delivered
+                )
+
+            # Only now, once the media is actually out, clear the link that
+            # asked for it: in a group the bot is silent and a bare link gives
+            # way to the file. Deleting earlier, before delivery, meant a mid-job
+            # failure such as a dead CDN URL left the sender with neither their
+            # link nor the video. On any failure the link stays, with the error
+            # beside it, as decided. Needs the bot to be a group admin with
+            # delete rights; a refusal there is named in the logs, not surfaced.
             source = job.payload.get("delete")
-            if source is not None:
+            if source is not None and delivered:
                 try:
                     await source.delete()
                 except TelegramError as exc:
-                    # A message already gone is benign and stays quiet. Anything
-                    # else is almost always the bot missing the admin "Delete
-                    # messages" right, which is silent otherwise: name the fix
-                    # at warning level so it's findable in the logs.
                     if "not found" in str(exc).lower():
                         log.info("source message already gone: %s", exc)
                     else:
@@ -202,20 +223,6 @@ class Runtime:
                             'messages" right.',
                             job.chat_id, exc,
                         )
-
-            # Keep the original index: it's part of the cache key.
-            playable = [
-                (i, item) for i, item in enumerate(post.items) if item.kind != PHOTO
-            ]
-            for position, (index, item) in enumerate(playable, start=1):
-                await self._deliver_video(
-                    bot, job, item, index, status, limits, workdir,
-                    total=len(playable), position=position,
-                )
-
-            photos = [item for item in post.items if item.kind == PHOTO]
-            if photos:
-                await self._deliver_photos(bot, job, photos, status, workdir)
 
             # A heads-up that isn't the post's own text, such as an album we
             # could only fetch part of. Sent last so it trails the media.
@@ -243,7 +250,13 @@ class Runtime:
         *,
         total: int,
         position: int,
-    ) -> None:
+        caption: Optional[str] = None,
+    ) -> bool:
+        """Deliver one video. Returns True when the file reached the chat, False
+        when a handled failure sent an explanation instead. Never raises for an
+        expected miss such as a dead CDN URL: the caller reads the bool to decide
+        whether the source link may be cleared, so a swallowed exception here
+        would wrongly count as success."""
         label = f" ({position}/{total})" if total > 1 else ""
         cap = self.cfg.max_upload_bytes
         key = self.cache_key(job.post_id)
@@ -256,15 +269,15 @@ class Runtime:
             await bot.send_message(
                 job.chat_id, f"No downloadable mp4 in that post{label}."
             )
-            return
+            return False
 
         # A cache hit skips download, mux, transcode and upload entirely.
         cached = await self.cache.get(key, index, selection.variant.url)
         if cached:
             await status.set("Sending from cache…", force=True)
             try:
-                await self._send_by_file_id(bot, job, item, cached)
-                return
+                await self._send_by_file_id(bot, job, item, cached, caption=caption)
+                return True
             except BadRequest as exc:
                 log.info("stale file_id for %s: %s", key, exc)
                 await self.cache.forget(key)
@@ -275,18 +288,35 @@ class Runtime:
         await bot.send_chat_action(job.chat_id, ChatAction.UPLOAD_VIDEO)
 
         src = workdir / f"{index}-source.mp4"
-        async with limits.downloads:
-            async def progress(done: int, total_bytes: Optional[int]) -> None:
-                if total_bytes:
-                    pct = done * 100 // total_bytes
-                    await status.set(f"Downloading{label}… {pct}%")
+        try:
+            async with limits.downloads:
+                async def progress(done: int, total_bytes: Optional[int]) -> None:
+                    if total_bytes:
+                        pct = done * 100 // total_bytes
+                        await status.set(f"Downloading{label}… {pct}%")
 
-            # Allow a generous margin over the cap so a transcodable file still lands.
-            ceiling = budget if not selection.needs_transcode else cap * 20
-            await select.download(
-                selection.variant.url, src, self.client,
-                max_bytes=ceiling, progress=progress,
+                # Allow a generous margin over the cap so a transcodable file still lands.
+                ceiling = budget if not selection.needs_transcode else cap * 20
+                await select.download(
+                    selection.variant.url, src, self.client,
+                    max_bytes=ceiling, progress=progress,
+                )
+        except (httpx.HTTPError, select.DownloadTooLarge) as exc:
+            # The CDN URL X handed us didn't answer (404s on removed or
+            # region-gated clips are common) or the file overran the ceiling.
+            # Report it and move on rather than take the worker down: offering
+            # the same dead URL back would be no help, so this points at the
+            # site, which resolves the post fresh.
+            log.warning("download failed for %s: %s", key, exc)
+            await status.done()
+            await bot.send_message(
+                job.chat_id,
+                f"I couldn't fetch that video{label} just now. It may have been "
+                f"removed, or be one X won't serve my way. Try the site:\n"
+                f"{self._site_link(job)}",
+                disable_web_page_preview=True,
             )
+            return False
 
         if item.needs_mux:
             src = await self._attach_audio(
@@ -313,7 +343,7 @@ class Runtime:
                     f"limit without ruining it.\n\n{self._elsewhere(job, item, selection)}",
                     disable_web_page_preview=True,
                 )
-                return
+                return False
             except transcode.TranscodeError as exc:
                 log.warning("transcode failed for %s: %s", key, exc)
                 await bot.send_message(
@@ -322,10 +352,10 @@ class Runtime:
                     f"{self._elsewhere(job, item, selection)}",
                     disable_web_page_preview=True,
                 )
-                return
+                return False
 
         await status.set(f"Uploading{label}…", force=True)
-        sent = await self._send_file(bot, job, item, upload, meta)
+        sent = await self._send_file(bot, job, item, upload, meta, caption=caption)
 
         file_id = self._file_id_of(sent)
         if file_id:
@@ -333,6 +363,7 @@ class Runtime:
                 key, index, selection.variant.url, item.kind, file_id,
                 width=meta.width, height=meta.height, duration=meta.duration_s,
             )
+        return True
 
     @staticmethod
     def _elsewhere(job: Job, item: MediaItem, selection) -> str:
@@ -346,9 +377,15 @@ class Runtime:
         if not item.needs_mux:
             return f"Direct download:\n{selection.variant.url}"
 
+        return f"Get it with sound here:\n{Runtime._site_link(job)}"
+
+    @staticmethod
+    def _site_link(job: Job) -> str:
+        """The post on the site, for when the bot itself couldn't deliver. The
+        site resolves the post fresh, so it gets past a stale CDN URL the bot
+        choked on. Falls back to the bare site when the link wasn't kept."""
         url = job.payload.get("url")
-        target = f"{SITE}/?url={quote(url, safe='')}" if url else SITE
-        return f"Get it with sound here:\n{target}"
+        return f"{SITE}/?url={quote(url, safe='')}" if url else SITE
 
     async def _attach_audio(
         self,
@@ -396,66 +433,92 @@ class Runtime:
 
         return out
 
-    async def _send_file(self, bot, job: Job, item: MediaItem, path: Path, meta):
+    async def _send_file(
+        self, bot, job: Job, item: MediaItem, path: Path, meta,
+        *, caption: Optional[str] = None,
+    ):
         with path.open("rb") as fh:
             if item.kind == GIF:
                 return await bot.send_animation(
-                    job.chat_id, animation=fh,
+                    job.chat_id, animation=fh, caption=caption,
                     width=meta.width, height=meta.height, duration=_int(meta.duration_s),
                 )
             return await bot.send_video(
-                job.chat_id, video=fh,
+                job.chat_id, video=fh, caption=caption,
                 width=meta.width, height=meta.height, duration=_int(meta.duration_s),
                 supports_streaming=True,
             )
 
-    async def _send_by_file_id(self, bot, job: Job, item: MediaItem, cached: dict):
+    async def _send_by_file_id(
+        self, bot, job: Job, item: MediaItem, cached: dict,
+        *, caption: Optional[str] = None,
+    ):
         if item.kind == GIF:
-            return await bot.send_animation(job.chat_id, animation=cached["file_id"])
+            return await bot.send_animation(
+                job.chat_id, animation=cached["file_id"], caption=caption
+            )
         return await bot.send_video(
-            job.chat_id, video=cached["file_id"], supports_streaming=True
+            job.chat_id, video=cached["file_id"], caption=caption,
+            supports_streaming=True,
         )
 
     async def _deliver_photos(
-        self, bot, job: Job, photos, status: Status, workdir: Path
-    ) -> None:
+        self, bot, job: Job, photos, status: Status, workdir: Path,
+        *, caption: Optional[str] = None,
+    ) -> bool:
+        """Deliver a post's images. Returns True when at least one was sent."""
         await status.set(f"Sending {len(photos)} image(s)…", force=True)
         links = [p.variants[0].url for p in photos if p.variants]
         if not links:
-            return
+            return False
 
         try:
-            await self._send_photos(bot, job, links)
+            return await self._send_photos(bot, job, links, caption=caption)
         except BadRequest as exc:
             # Handing Telegram a URL makes *its* servers fetch the file, which
             # costs us nothing and is why it's the first thing tried. Its
             # fetcher is stricter than a browser though, and i.redd.it turns it
             # away often enough to be worth paying for the bytes ourselves.
             log.info("photo by URL rejected (%s); uploading the bytes instead", exc)
-            await self._send_photos(bot, job, await self._localise(links, workdir))
+            return await self._send_photos(
+                bot, job, await self._localise(links, workdir), caption=caption
+            )
 
-    async def _send_photos(self, bot, job: Job, photos: list) -> None:
-        """Send URLs or open files. Albums cap at 10 items, hence the batching."""
+    async def _send_photos(
+        self, bot, job: Job, photos: list, *, caption: Optional[str] = None
+    ) -> bool:
+        """Send URLs or open files. Albums cap at 10 items, hence the batching.
+        Returns True if anything was sent."""
         if not photos:
             await bot.send_message(
                 job.chat_id, "I couldn't fetch the images from that post."
             )
-            return
+            return False
 
         for start in range(0, len(photos), 10):
             batch = photos[start : start + 10]
             handles = [p.open("rb") if isinstance(p, Path) else p for p in batch]
+            # The handle that posted it rides on the first item of the first
+            # batch only: Telegram shows one caption per album, and repeating it
+            # would stack duplicates across batches.
+            first = start == 0
             try:
                 if len(handles) == 1:
-                    await bot.send_photo(job.chat_id, photo=handles[0])
-                else:
-                    await bot.send_media_group(
-                        job.chat_id, media=[InputMediaPhoto(h) for h in handles]
+                    await bot.send_photo(
+                        job.chat_id, photo=handles[0],
+                        caption=caption if first else None,
                     )
+                else:
+                    media = [
+                        InputMediaPhoto(h, caption=caption if first and i == 0 else None)
+                        for i, h in enumerate(handles)
+                    ]
+                    await bot.send_media_group(job.chat_id, media=media)
             finally:
                 for handle in handles:
                     if not isinstance(handle, str):
                         handle.close()
+        return True
 
     async def _localise(self, links: list[str], workdir: Path) -> list[Path]:
         """Pull images onto disk. Skips the ones that won't come, rather than
@@ -509,6 +572,14 @@ def _is_pure_link(text: str, url: Optional[str]) -> bool:
     Whitespace around the link doesn't count as commentary.
     """
     return bool(url) and (text or "").strip() == url
+
+
+def _caption(author: Optional[str]) -> Optional[str]:
+    """The line shown under delivered media: the @handle that posted it, or None
+    when the source didn't name an author. The handle comes from the platform
+    already stripped of its @, so it's added back here."""
+    author = (author or "").strip().lstrip("@")
+    return f"@{author}" if author else None
 
 
 def _is_group_chat(update: Update) -> bool:
