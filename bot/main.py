@@ -31,7 +31,7 @@ from telegram import (
     Update,
 )
 from telegram.constants import ChatAction, ChatType
-from telegram.error import BadRequest, TelegramError
+from telegram.error import BadRequest, NetworkError, TelegramError
 from telegram.ext import (
     AIORateLimiter,
     Application,
@@ -355,7 +355,11 @@ class Runtime:
                 return False
 
         await status.set(f"Uploading{label}…", force=True)
-        sent = await self._send_file(bot, job, item, upload, meta, caption=caption)
+        sent = await self._send_file_retrying(
+            bot, job, item, upload, meta, status, label=label, caption=caption
+        )
+        if sent is None:
+            return False
 
         file_id = self._file_id_of(sent)
         if file_id:
@@ -432,6 +436,43 @@ class Runtime:
             return video
 
         return out
+
+    async def _send_file_retrying(
+        self, bot, job: Job, item: MediaItem, path: Path, meta, status: Status,
+        *, label: str = "", caption: Optional[str] = None,
+    ):
+        """Upload one file, retrying once on a transient network error.
+
+        A stalled upload raises TimedOut (a NetworkError subclass) once the
+        media write timeout passes; a fresh connection usually clears it.
+        Returns the sent message, or None after a second failure — in which
+        case the chat is told and the status cleared. Before this wrapper
+        existed the exception escaped the job unhandled: the worker logged it
+        and the chat was left on a frozen "Uploading…" with nothing else to
+        show for it.
+
+        The retry can in principle double-send: a timeout that fired after
+        Telegram accepted the file is indistinguishable from one that fired
+        before. A rare duplicate is the cheaper failure here; the video never
+        arriving at all was the old behaviour.
+        """
+        for attempt in (1, 2):
+            try:
+                return await self._send_file(bot, job, item, path, meta, caption=caption)
+            except NetworkError as exc:
+                log.warning(
+                    "upload of %s failed (attempt %d/2): %s", path.name, attempt, exc
+                )
+                if attempt == 2:
+                    await status.done()
+                    await bot.send_message(
+                        job.chat_id,
+                        f"The upload to Telegram kept timing out{label}. Send the "
+                        f"link again to retry, or try the site:\n{self._site_link(job)}",
+                        disable_web_page_preview=True,
+                    )
+                    return None
+                await status.set(f"Upload stalled, retrying{label}…", force=True)
 
     async def _send_file(
         self, bot, job: Job, item: MediaItem, path: Path, meta,
@@ -791,6 +832,13 @@ def build_application(cfg: Config) -> Application:
         # Uploads near 50 MB need far more than the default write timeout.
         .write_timeout(300)
         .read_timeout(120)
+        # PTB routes *media* uploads (send_video, send_animation, send_photo)
+        # through this timeout, not write_timeout above: HTTPXRequest.do_request
+        # swaps in media_write_timeout whenever files are attached, and its
+        # default is 20s. A 20-second stall mid-upload killed the job with
+        # TimedOut and left the chat frozen on "Uploading…", which is why this
+        # line exists — write_timeout(300) alone never covered video uploads.
+        .media_write_timeout(300)
         .post_init(post_init)
         .post_shutdown(post_shutdown)
         .build()
