@@ -71,6 +71,11 @@ MUX_AUDIO_ALLOWANCE = 0.10
 # Where a user goes when Telegram's 50 MB cap makes the bot the wrong tool.
 SITE = "https://justthefile.com"
 
+# Bot API ceiling for media handed to send_video/send_animation as a URL rather
+# than uploaded bytes. Under it, Telegram's own servers do the fetching, so the
+# video never crosses this host's uplink; over it, bytes must be pushed.
+URL_FETCH_MAX_BYTES = 20 * MB
+
 
 def platform_named(name: str):
     """The platform module this bot serves. Unknown names are a config error."""
@@ -282,6 +287,30 @@ class Runtime:
                 log.info("stale file_id for %s: %s", key, exc)
                 await self.cache.forget(key)
 
+        # Next cheapest: hand Telegram the CDN URL and let its servers fetch
+        # the file. Nothing crosses this host's uplink, which is the difference
+        # between a video arriving and the same bytes stalling out mid-upload on
+        # a slow route. Anything Telegram refuses (or that needs local work
+        # first — transcode, mux, or over the URL cap) falls through to the
+        # ordinary download-and-upload path below.
+        sent = await self._try_send_by_url(
+            bot, job, item, selection, status, label=label, caption=caption
+        )
+        if sent is not None:
+            file_id = self._file_id_of(sent)
+            if file_id:
+                # Dims here are the CDN's word, not probed: probing would mean
+                # downloading, which this path exists to avoid. They're only a
+                # record — re-sends go through _send_by_file_id, which passes
+                # no dims — so advisory values cost nothing.
+                await self.cache.put(
+                    key, index, selection.variant.url, item.kind, file_id,
+                    width=selection.variant.width,
+                    height=selection.variant.height,
+                    duration=item.duration_s,
+                )
+            return True
+
         await status.set(
             f"Downloading{label}… {_human(selection.size_bytes)}", force=True
         )
@@ -436,6 +465,67 @@ class Runtime:
             return video
 
         return out
+
+    async def _try_send_by_url(
+        self, bot, job: Job, item: MediaItem, selection, status: Status,
+        *, label: str = "", caption: Optional[str] = None,
+    ):
+        """Try to deliver one video by handing Telegram the CDN URL.
+
+        The Bot API accepts a URL in place of uploaded bytes: Telegram's own
+        servers fetch the file, and none of it crosses this host's uplink. For
+        a host whose route to Telegram is slow or congested — the failure that
+        used to leave chats frozen on "Uploading…" — this is the difference
+        between delivery and a timeout, and even on a healthy host it costs
+        nothing. Gated by the platform's URL_DELIVERY flag (X's CDN serves the
+        world with no auth; Reddit's blocks datacentres, so its bot opts out),
+        and skipped when the file needs local work first: transcode, mux, or
+        over the Bot API's 20 MB URL cap.
+
+        Returns the sent Message, or None to send the caller down the
+        upload-bytes path. A refusal here is expected, not exceptional: an
+        expired CDN URL or a fetcher quirk lands as a BadRequest, and the
+        ordinary path handles a dead URL with its own message.
+        """
+        url = selection.variant.url
+        if not getattr(self.handler, "URL_DELIVERY", False):
+            return None
+        if selection.needs_transcode or item.needs_mux:
+            return None
+        # No content-length from the CDN and no bitrate to estimate from: the
+        # size is unknown, so the cap can't be checked and bytes it is.
+        size = selection.size_bytes
+        if size is None or size > URL_FETCH_MAX_BYTES:
+            return None
+
+        await status.set(f"Sending{label}…", force=True)
+        await bot.send_chat_action(job.chat_id, ChatAction.UPLOAD_VIDEO)
+        try:
+            # No width/height/duration here: those describe the *source* and
+            # can lie (fxtwitter's do), and there's no probed file to correct
+            # them with. Telegram measures the fetched file itself.
+            if item.kind == GIF:
+                return await bot.send_animation(
+                    job.chat_id, animation=url, caption=caption
+                )
+            return await bot.send_video(
+                job.chat_id, video=url, caption=caption, supports_streaming=True
+            )
+        except BadRequest as exc:
+            log.info(
+                "send-by-url rejected for %s%s (%s); uploading bytes instead",
+                job.post_id, label, exc,
+            )
+            return None
+        except NetworkError as exc:
+            # The request to Telegram itself failed — not Telegram's fetch of
+            # the URL. Rare, transient, and the byte path below has its own
+            # retry, so fall through and let it try.
+            log.warning(
+                "send-by-url request failed for %s%s (%s); uploading bytes",
+                job.post_id, label, exc,
+            )
+            return None
 
     async def _send_file_retrying(
         self, bot, job: Job, item: MediaItem, path: Path, meta, status: Status,

@@ -31,6 +31,17 @@ MEDIA_HOSTS = ("video.twimg.com", "pbs.twimg.com")
 # Referer, which the front end handles with referrerPolicy: "no-referrer".
 DELIVERY = DIRECT
 
+# The Telegram bot may hand these URLs straight to send_video and let Telegram's
+# own servers fetch the file, instead of uploading the bytes. This bypasses the
+# bot host's uplink entirely, which matters because a small VPS's route to
+# Telegram can be too slow to push even a 20 MB upload before any sane timeout.
+# Bot API caps media sent by URL at 20 MB; anything larger still uploads bytes.
+# Only safe where the CDN serves the world with no auth and no Referer check
+# that Telegram's fetcher would trip (video.twimg.com qualifies). Platforms
+# whose CDNs block datacentre traffic must not set this: Telegram's fetch would
+# be refused on every small video, and the wasted attempt costs latency.
+URL_DELIVERY = True
+
 
 async def identify(url: str, client: httpx.AsyncClient) -> str | None:
     """Tweet ID, or None if this link isn't X's.
